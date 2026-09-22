@@ -1,0 +1,52 @@
+name: wphost
+
+services:
+  panel:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.panel
+    restart: unless-stopped
+    environment:
+      PANEL_ADMIN_HASH: ${PANEL_ADMIN_HASH:?}
+      PANEL_SESSION_KEY: ${PANEL_SESSION_KEY:?}
+      WORKER_TOKEN: ${WORKER_TOKEN:?}
+      PANEL_DOMAIN: ${PANEL_DOMAIN:?}
+    volumes:
+      - ${WPH_DATA_DIR:?}/panel:/data
+    networks: [control, web]
+  worker:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.worker
+    restart: unless-stopped
+    environment:
+      WORKER_TOKEN: ${WORKER_TOKEN:?}
+      WPH_DATA_DIR: ${WPH_DATA_DIR:?}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${WPH_DATA_DIR:?}/sites:${WPH_DATA_DIR:?}/sites
+      - routes:/routes
+    networks: [control]
+  caddy:
+    image: caddy:2.10-alpine
+    container_name: wph-caddy
+    restart: unless-stopped
+    environment:
+      PANEL_DOMAIN: ${PANEL_DOMAIN:?}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - routes:/etc/caddy/sites:ro
+      - ${WPH_DATA_DIR:?}/caddy:/data
+    networks: [web]
+    depends_on: [panel]
+
+networks:
+  control:
+    internal: true
+  web:
+
+volumes:
+  routes:
