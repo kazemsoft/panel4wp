@@ -13,7 +13,7 @@ services:
       PANEL_DOMAIN: ${PANEL_DOMAIN:?}
     volumes:
       - ${WPH_DATA_DIR:?}/panel:/data
-    networks: [control, web]
+    networks: [control, web, tools_proxy]
   worker:
     build:
       context: .
@@ -22,6 +22,7 @@ services:
     environment:
       WORKER_TOKEN: ${WORKER_TOKEN:?}
       WPH_DATA_DIR: ${WPH_DATA_DIR:?}
+      PANEL_DOMAIN: ${PANEL_DOMAIN:?}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${WPH_DATA_DIR:?}/sites:${WPH_DATA_DIR:?}/sites
@@ -50,6 +51,9 @@ networks:
   web:
   sites_proxy:
     name: wphost-sites-proxy
+  tools_proxy:
+    name: wphost-tools-proxy
+    internal: true
 
 volumes:
   routes:

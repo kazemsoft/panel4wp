@@ -14,6 +14,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	"path"
@@ -38,6 +39,7 @@ body{font:16px system-ui,sans-serif;background:#f5f7fa;color:#17212b;max-width:1
 {{if eq .Status "running"}}<form class="inline" action="/sites/{{.ID}}/stop" method="post"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="secondary">Stop</button></form>{{end}}
 {{if eq .Status "running"}}<form class="inline" action="/sites/{{.ID}}/backup" method="post"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button>Back up now</button></form>{{end}}
 {{if eq .Status "running"}}<p><a href="/sites/{{.ID}}/files">Manage wp-content files</a></p>{{end}}
+{{if eq .Status "running"}}<form class="inline" action="/sites/{{.ID}}/database-start" method="post"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button>Open database manager</button></form><small> Available for 15 minutes</small>{{end}}
 {{if eq .Status "stopped"}}<form class="inline" action="/sites/{{.ID}}/start" method="post"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button>Start</button></form>{{end}}
 {{if eq .Status "failed"}}<form class="inline" action="/sites/{{.ID}}/retry" method="post"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button>Retry</button></form>{{end}}
 {{if .Backups}}<details><summary>Restore a backup</summary>{{range .Backups}}<form action="/sites/{{$site.ID}}/restore" method="post"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="backup_id" value="{{.ID}}"><small>{{formatTime .CreatedAt}} · {{.ID}}</small><label>Type {{$site.Domain}} to confirm<input name="confirm" required></label><p><button class="danger">Restore this backup</button></p></form>{{end}}</details>{{end}}
@@ -250,6 +252,50 @@ func (a *app) callWorker(path string, body, result any) error {
 	return nil
 }
 
+func removePanelCookies(req *http.Request) {
+	cookies := req.Cookies()
+	req.Header.Del("Cookie")
+	for _, cookie := range cookies {
+		if cookie.Name != "wph_session" && cookie.Name != "wph_flash" {
+			req.AddCookie(cookie)
+		}
+	}
+}
+
+func (a *app) proxyDatabase(w http.ResponseWriter, r *http.Request) {
+	parts := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/sites/"), "/", 3)
+	if len(parts) != 3 || !core.ValidID(parts[0]) || parts[1] != "database" {
+		http.NotFound(w, r)
+		return
+	}
+	site, ok, err := a.store.Get(parts[0])
+	if err != nil || !ok || site.Status != core.StatusRunning {
+		http.NotFound(w, r)
+		return
+	}
+	prefix := "/sites/" + site.ID + "/database"
+	target := &url.URL{Scheme: "http", Host: "wph-pma-" + site.ID}
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	originalDirector := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		originalDirector(req)
+		removePanelCookies(req)
+		req.URL.Path = strings.TrimPrefix(req.URL.Path, prefix)
+		if req.URL.Path == "" {
+			req.URL.Path = "/"
+		}
+		req.URL.RawPath = ""
+		req.Host = target.Host
+		req.Header.Set("X-Forwarded-Prefix", prefix)
+	}
+	proxy.ErrorHandler = func(resp http.ResponseWriter, _ *http.Request, proxyErr error) {
+		log.Printf("database proxy for %s failed: %v", site.ID, proxyErr)
+		http.Error(resp, "database manager is not running; open it again from the Sites page", http.StatusBadGateway)
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	proxy.ServeHTTP(w, r)
+}
+
 func (a *app) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/health" {
 		w.WriteHeader(http.StatusNoContent)
@@ -279,6 +325,10 @@ func (a *app) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if !a.authenticated(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if strings.Contains(r.URL.Path, "/database/") && strings.HasPrefix(r.URL.Path, "/sites/") {
+		a.proxyDatabase(w, r)
 		return
 	}
 	if r.Method == http.MethodGet {
@@ -401,6 +451,19 @@ func (a *app) siteAction(w http.ResponseWriter, r *http.Request) {
 	}
 	if action == "upload" || action == "download" || action == "mkdir" || action == "file-delete" {
 		a.fileAction(w, r, site, action)
+		return
+	}
+	if action == "database-start" || action == "database-stop" {
+		dbAction := strings.TrimPrefix(action, "database-")
+		if err := a.callWorker("/database", map[string]string{"id": id, "action": dbAction}, nil); err != nil {
+			a.render(w, r, view{LoggedIn: true, Error: "Database manager: " + err.Error()})
+			return
+		}
+		if dbAction == "start" {
+			http.Redirect(w, r, "/sites/"+id+"/database/", http.StatusSeeOther)
+		} else {
+			a.redirectWithFlash(w, r, "Database manager stopped", "")
+		}
 		return
 	}
 	if action == "delete" && r.FormValue("confirm") != site.Domain {

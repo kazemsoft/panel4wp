@@ -42,6 +42,27 @@ func TestMultipartCSRF(t *testing.T) {
 	}
 }
 
+func TestDatabaseProxyRequiresPanelAuthentication(t *testing.T) {
+	a := &app{sessionKey: []byte(strings.Repeat("s", 64))}
+	req := httptest.NewRequest(http.MethodGet, "/sites/0123456789abcdef/database/", nil)
+	resp := httptest.NewRecorder()
+	a.ServeHTTP(resp, req)
+	if resp.Code != http.StatusUnauthorized {
+		t.Fatalf("database proxy bypassed authentication: %d", resp.Code)
+	}
+}
+
+func TestDatabaseProxyDoesNotForwardPanelCookies(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(&http.Cookie{Name: "wph_session", Value: "secret"})
+	req.AddCookie(&http.Cookie{Name: "wph_flash", Value: "result"})
+	req.AddCookie(&http.Cookie{Name: "phpMyAdmin", Value: "database-session"})
+	removePanelCookies(req)
+	if got := req.Header.Get("Cookie"); got != "phpMyAdmin=database-session" {
+		t.Fatalf("unexpected proxied cookies: %q", got)
+	}
+}
+
 func TestLoginCreateAndRejectMissingCSRF(t *testing.T) {
 	workerCalls := 0
 	worker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

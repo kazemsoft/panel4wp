@@ -14,7 +14,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kazemsoft/panel4wp/internal/core"
@@ -63,6 +65,25 @@ const composeTemplate = `services:
     cpus: %.2f
     pids_limit: 200
     security_opt: [no-new-privileges:true]
+  phpmyadmin:
+    image: phpmyadmin:5.2-apache
+    container_name: wph-pma-%s
+    profiles: [tools]
+    restart: "no"
+    environment:
+      PMA_HOST: db
+      PMA_USER: wordpress
+      PMA_PASSWORD_FILE: /run/secrets/db_password
+      PMA_ABSOLUTE_URI: %s
+    secrets: [db_password]
+    networks: [database, tools_proxy]
+    depends_on:
+      db:
+        condition: service_healthy
+    mem_limit: 256m
+    cpus: 0.50
+    pids_limit: 100
+    security_opt: [no-new-privileges:true]
   cli:
     image: wordpress:cli-php8.3
     profiles: [tools]
@@ -84,6 +105,9 @@ networks:
     name: wphost-sites-proxy
   database:
     internal: true
+  tools_proxy:
+    external: true
+    name: wphost-tools-proxy
 secrets:
   db_password:
     file: ./secrets/db_password
@@ -142,7 +166,10 @@ type worker struct {
 	backupsRoot string
 	routes      string
 	token       string
+	panelDomain string
 	docker      runner
+	toolsMu     sync.Mutex
+	toolTimers  map[string]*time.Timer
 }
 
 type backupManifest struct {
@@ -156,6 +183,29 @@ type backupManifest struct {
 
 const legacyFrontendNetwork = "networks:\n  frontend:\n  database:\n    internal: true"
 const sharedFrontendNetwork = "networks:\n  frontend:\n    external: true\n    name: wphost-sites-proxy\n  database:\n    internal: true"
+
+const databaseToolLifetime = 15 * time.Minute
+
+const databaseToolTemplate = `  phpmyadmin:
+    image: phpmyadmin:5.2-apache
+    container_name: wph-pma-%s
+    profiles: [tools]
+    restart: "no"
+    environment:
+      PMA_HOST: db
+      PMA_USER: wordpress
+      PMA_PASSWORD_FILE: /run/secrets/db_password
+      PMA_ABSOLUTE_URI: %s
+    secrets: [db_password]
+    networks: [database, tools_proxy]
+    depends_on:
+      db:
+        condition: service_healthy
+    mem_limit: 256m
+    cpus: 0.50
+    pids_limit: 100
+    security_opt: [no-new-privileges:true]
+`
 
 const listFilesPHP = `$root=realpath("/var/www/html/wp-content");$rel=$argv[1]??"";$p=realpath($root.($rel===""?"":"/".$rel));if($root===false||$p===false||($p!==$root&&!str_starts_with($p,$root."/"))||!is_dir($p)){fwrite(STDERR,"invalid directory");exit(3);}$out=[];foreach(scandir($p) as $n){if($n==="."||$n==="..")continue;$f=$p."/".$n;$s=lstat($f);$type=is_link($f)?"link":(is_dir($f)?"directory":"file");$out[]=["name"=>$n,"type"=>$type,"size"=>$type==="file"?(int)$s["size"]:0,"modified"=>(int)$s["mtime"]];}usort($out,fn($a,$b)=>($a["type"]==="directory"?0:1)<=>($b["type"]==="directory"?0:1)?:strnatcasecmp($a["name"],$b["name"]));echo json_encode($out,JSON_UNESCAPED_UNICODE|JSON_INVALID_UTF8_SUBSTITUTE);`
 
@@ -176,6 +226,99 @@ func (w *worker) backupDir(siteID, backupID string) string {
 func (w *worker) composeArgs(id string, args ...string) []string {
 	base := []string{"compose", "-p", "wph-" + id, "-f", filepath.Join(w.siteDir(id), "compose.yaml")}
 	return append(base, args...)
+}
+
+func (w *worker) databaseURL(id string) string {
+	base := strings.TrimRight(w.panelDomain, "/")
+	if !strings.Contains(base, "://") {
+		base = "https://" + base
+	}
+	return base + "/sites/" + id + "/database/"
+}
+
+func (w *worker) ensureDatabaseTool(id string) error {
+	composePath := filepath.Join(w.siteDir(id), "compose.yaml")
+	data, err := os.ReadFile(composePath)
+	if err != nil {
+		return err
+	}
+	content := string(data)
+	if strings.Contains(content, "  phpmyadmin:\n") {
+		return nil
+	}
+	if !strings.Contains(content, "  cli:\n") || !strings.Contains(content, "  database:\n    internal: true\n") {
+		return errors.New("site compose cannot be upgraded with database manager")
+	}
+	tool := fmt.Sprintf(databaseToolTemplate, id, strconv.Quote(w.databaseURL(id)))
+	content = strings.Replace(content, "  cli:\n", tool+"  cli:\n", 1)
+	content = strings.Replace(content, "  database:\n    internal: true\n", "  database:\n    internal: true\n  tools_proxy:\n    external: true\n    name: wphost-tools-proxy\n", 1)
+	return os.WriteFile(composePath, []byte(content), 0600)
+}
+
+func (w *worker) scheduleDatabaseStop(id string) {
+	w.toolsMu.Lock()
+	defer w.toolsMu.Unlock()
+	if w.toolTimers == nil {
+		w.toolTimers = make(map[string]*time.Timer)
+	}
+	if timer := w.toolTimers[id]; timer != nil {
+		timer.Stop()
+	}
+	w.toolTimers[id] = time.AfterFunc(databaseToolLifetime, func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		if err := w.docker.Run(ctx, w.composeArgs(id, "rm", "-sf", "phpmyadmin")...); err != nil {
+			log.Printf("stop expired database manager for %s: %v", id, err)
+		}
+		w.toolsMu.Lock()
+		delete(w.toolTimers, id)
+		w.toolsMu.Unlock()
+	})
+}
+
+func (w *worker) databaseAction(ctx context.Context, id, action string) error {
+	if !core.ValidID(id) {
+		return errors.New("invalid site ID")
+	}
+	if _, err := os.Stat(filepath.Join(w.siteDir(id), "compose.yaml")); err != nil {
+		return err
+	}
+	if err := w.ensureDatabaseTool(id); err != nil {
+		return err
+	}
+	switch action {
+	case "start":
+		if err := w.docker.Run(ctx, w.composeArgs(id, "--profile", "tools", "up", "-d", "phpmyadmin")...); err != nil {
+			return err
+		}
+		var readyErr error
+		for attempt := 0; attempt < 30; attempt++ {
+			readyErr = w.docker.Run(ctx, "exec", "wph-pma-"+id, "php", "-r", `$s=@fsockopen("127.0.0.1",80);exit($s?0:1);`)
+			if readyErr == nil {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(time.Second):
+			}
+		}
+		if readyErr != nil {
+			return fmt.Errorf("database manager did not become ready: %w", readyErr)
+		}
+		w.scheduleDatabaseStop(id)
+		return nil
+	case "stop":
+		w.toolsMu.Lock()
+		if timer := w.toolTimers[id]; timer != nil {
+			timer.Stop()
+			delete(w.toolTimers, id)
+		}
+		w.toolsMu.Unlock()
+		return w.docker.Run(ctx, w.composeArgs(id, "rm", "-sf", "phpmyadmin")...)
+	default:
+		return errors.New("invalid database action")
+	}
 }
 
 func (w *worker) migrateLegacyNetworks(ctx context.Context) error {
@@ -473,7 +616,7 @@ func (w *worker) create(ctx context.Context, req core.CreateRequest) error {
 		}
 	}
 	memory, cpus := core.ResourceLimits(req.Site)
-	compose := fmt.Sprintf(composeTemplate, req.Site.ID, memory, cpus, req.Site.ID, memory, cpus)
+	compose := fmt.Sprintf(composeTemplate, req.Site.ID, memory, cpus, req.Site.ID, memory, cpus, req.Site.ID, strconv.Quote(w.databaseURL(req.Site.ID)))
 	if err := os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte(compose), 0600); err != nil {
 		return err
 	}
@@ -500,6 +643,11 @@ func (w *worker) action(ctx context.Context, id, action string) error {
 	}
 	if _, err := os.Stat(filepath.Join(w.siteDir(id), "compose.yaml")); err != nil {
 		return err
+	}
+	if action == "stop" || action == "delete" {
+		if err := w.databaseAction(ctx, id, "stop"); err != nil {
+			return fmt.Errorf("stop database manager: %w", err)
+		}
 	}
 	switch action {
 	case "start":
@@ -566,6 +714,13 @@ func (w *worker) ServeHTTP(resp http.ResponseWriter, req *http.Request) {
 			return
 		}
 		result, err = w.backup(ctx, body)
+	} else if req.URL.Path == "/database" {
+		var body struct{ ID, Action string }
+		if decodeErr := json.NewDecoder(req.Body).Decode(&body); decodeErr != nil {
+			http.Error(resp, "invalid request", http.StatusBadRequest)
+			return
+		}
+		err = w.databaseAction(ctx, body.ID, body.Action)
 	} else if req.URL.Path == "/restore" {
 		var body core.RestoreRequest
 		if decodeErr := json.NewDecoder(req.Body).Decode(&body); decodeErr != nil {
@@ -628,13 +783,17 @@ func (w *worker) ServeHTTP(resp http.ResponseWriter, req *http.Request) {
 func main() {
 	token := os.Getenv("WORKER_TOKEN")
 	dataDir := os.Getenv("WPH_DATA_DIR")
+	panelDomain := os.Getenv("PANEL_DOMAIN")
 	if len(token) < 32 {
 		log.Fatal("WORKER_TOKEN must be at least 32 characters")
 	}
 	if !filepath.IsAbs(dataDir) {
 		log.Fatal("WPH_DATA_DIR must be an absolute host path")
 	}
-	w := &worker{root: filepath.Join(dataDir, "sites"), backupsRoot: filepath.Join(dataDir, "backups"), routes: "/routes", token: token, docker: dockerRunner{}}
+	if panelDomain == "" {
+		log.Fatal("PANEL_DOMAIN is required")
+	}
+	w := &worker{root: filepath.Join(dataDir, "sites"), backupsRoot: filepath.Join(dataDir, "backups"), routes: "/routes", token: token, panelDomain: panelDomain, docker: dockerRunner{}, toolTimers: make(map[string]*time.Timer)}
 	migrateCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	if err := w.migrateLegacyNetworks(migrateCtx); err != nil {
