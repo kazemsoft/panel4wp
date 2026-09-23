@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,6 +22,7 @@ import (
 	"time"
 
 	"github.com/kazemsoft/panel4wp/internal/core"
+	"github.com/kazemsoft/panel4wp/internal/settings"
 )
 
 const composeTemplate = `services:
@@ -386,6 +388,113 @@ func (w *worker) updateSite(ctx context.Context, req core.UpdateRequest) error {
 		return err
 	}
 	return w.docker.Run(ctx, w.composeArgs(req.Site.ID, "run", "--rm", "--no-deps", "cli", "sh", "-c", wpUpdateScript)...)
+}
+
+func directorySize(root string) (int64, error) {
+	var total int64
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return nil
+			}
+			return err
+		}
+		if entry.Type().IsRegular() {
+			info, err := entry.Info()
+			if err != nil {
+				return err
+			}
+			total += info.Size()
+		}
+		return nil
+	})
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	return total, err
+}
+
+func (w *worker) volumeSize(ctx context.Context, volume string) (int64, error) {
+	out, err := w.docker.Output(ctx, "run", "--rm", "--volume", volume+":/data:ro", "alpine:3.22", "du", "-sk", "/data")
+	if err != nil {
+		return 0, err
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) == 0 {
+		return 0, errors.New("Docker volume size returned no data")
+	}
+	kib, err := strconv.ParseInt(fields[0], 10, 64)
+	if err != nil || kib < 0 {
+		return 0, errors.New("invalid Docker volume size")
+	}
+	return kib * 1024, nil
+}
+
+func (w *worker) storage(ctx context.Context, req core.StorageRequest) (map[string]core.SiteStorage, error) {
+	if len(req.SiteIDs) == 0 || len(req.SiteIDs) > 50 {
+		return nil, errors.New("storage request must contain 1 to 50 sites")
+	}
+	seen := make(map[string]bool, len(req.SiteIDs))
+	result := make(map[string]core.SiteStorage, len(req.SiteIDs))
+	for _, id := range req.SiteIDs {
+		if !core.ValidID(id) || seen[id] {
+			return nil, errors.New("invalid site ID in storage request")
+		}
+		seen[id] = true
+		wordpressBytes, err := w.volumeSize(ctx, "wph-"+id+"_wordpress_data")
+		if err != nil {
+			return nil, fmt.Errorf("WordPress storage for %s: %w", id, err)
+		}
+		databaseBytes, err := w.volumeSize(ctx, "wph-"+id+"_database_data")
+		if err != nil {
+			return nil, fmt.Errorf("database storage for %s: %w", id, err)
+		}
+		backupBytes, err := directorySize(filepath.Join(w.backupsRoot, id))
+		if err != nil {
+			return nil, fmt.Errorf("backup storage for %s: %w", id, err)
+		}
+		result[id] = core.SiteStorage{WordPressBytes: wordpressBytes, DatabaseBytes: databaseBytes, BackupBytes: backupBytes}
+	}
+	return result, nil
+}
+
+func phpValue(value string) string {
+	return `base64_decode('` + base64.StdEncoding.EncodeToString([]byte(value)) + `')`
+}
+
+func (w *worker) applyMail(ctx context.Context, req settings.ApplyRequest) error {
+	if !core.ValidID(req.SiteID) {
+		return errors.New("invalid site ID")
+	}
+	container := "wph-wp-" + req.SiteID
+	const plugin = "/var/www/html/wp-content/mu-plugins/panel4wp-smtp.php"
+	if !req.Mail.Enabled {
+		return w.docker.Run(ctx, "exec", container, "rm", "-f", plugin)
+	}
+	if err := settings.ValidateMail(req.Mail); err != nil {
+		return err
+	}
+	secure := ""
+	if req.Mail.Encryption == "starttls" {
+		secure = "  $mail->SMTPSecure = 'tls'; $mail->SMTPAutoTLS = true;\n"
+	} else if req.Mail.Encryption == "tls" {
+		secure = "  $mail->SMTPSecure = 'ssl';\n"
+	}
+	auth := req.Mail.Username != ""
+	php := fmt.Sprintf(`<?php
+add_action('phpmailer_init', static function ($mail) {
+  $mail->isSMTP();
+  $mail->Host = %s;
+  $mail->Port = %d;
+  $mail->SMTPAuth = %t;
+  $mail->Username = %s;
+  $mail->Password = %s;
+%s});
+add_filter('wp_mail_from', static fn () => %s);
+add_filter('wp_mail_from_name', static fn () => %s);
+`, phpValue(req.Mail.Host), req.Mail.Port, auth, phpValue(req.Mail.Username), phpValue(req.Mail.Password), secure, phpValue(req.Mail.FromEmail), phpValue(req.Mail.FromName))
+	command := "umask 077; mkdir -p /var/www/html/wp-content/mu-plugins; cat > " + plugin + "; chown 33:33 " + plugin + "; chmod 0600 " + plugin
+	return w.docker.Input(ctx, []byte(php), "exec", "-i", container, "sh", "-c", command)
 }
 
 func (w *worker) migrateLegacyNetworks(ctx context.Context) error {
@@ -802,6 +911,20 @@ func (w *worker) ServeHTTP(resp http.ResponseWriter, req *http.Request) {
 			return
 		}
 		err = w.updateSite(ctx, body)
+	} else if req.URL.Path == "/storage" {
+		var body core.StorageRequest
+		if decodeErr := json.NewDecoder(req.Body).Decode(&body); decodeErr != nil {
+			http.Error(resp, "invalid request", http.StatusBadRequest)
+			return
+		}
+		result, err = w.storage(ctx, body)
+	} else if req.URL.Path == "/mail" {
+		var body settings.ApplyRequest
+		if decodeErr := json.NewDecoder(req.Body).Decode(&body); decodeErr != nil {
+			http.Error(resp, "invalid request", http.StatusBadRequest)
+			return
+		}
+		err = w.applyMail(ctx, body)
 	} else if req.URL.Path == "/restore" {
 		var body core.RestoreRequest
 		if decodeErr := json.NewDecoder(req.Body).Decode(&body); decodeErr != nil {

@@ -16,6 +16,8 @@ WordPress frontends share a proxy network with Caddy so routes can be changed wi
 
 Secrets are generated locally, stored beneath a mode `0700` data directory, excluded from Git and Docker build contexts, and mounted into site containers as files. Anyone with root or Docker access on the host can read them.
 
+Global SMTP settings are encrypted at rest with AES-GCM using key material derived from `PANEL_SESSION_KEY`. The password is not returned to the browser after saving. A site with SMTP enabled must be able to use that credential, so its protected must-use plugin is readable by the WordPress process; a compromised enabled site can therefore recover its assigned SMTP credential. Use a dedicated, restricted mail account.
+
 Backups are stored locally under the same protected data directory and contain site content plus a database dump. Checksums detect accidental corruption; they do not protect against an attacker who can rewrite both the files and manifest. Backups are not encrypted. Protect and copy them as sensitive production data.
 
 The browser file manager accepts only normalized relative paths, resolves the target inside the WordPress container, and checks that the real path remains beneath `/var/www/html/wp-content`. Downloads, writes, and deletes reject symbolic links. Upload and download size is limited to 10 MB. These checks must remain in both the browser-facing panel and privileged worker.

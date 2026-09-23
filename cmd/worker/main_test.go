@@ -10,9 +10,13 @@ import (
 	"time"
 
 	"github.com/kazemsoft/panel4wp/internal/core"
+	"github.com/kazemsoft/panel4wp/internal/settings"
 )
 
-type fakeDocker struct{ calls [][]string }
+type fakeDocker struct {
+	calls  [][]string
+	inputs [][]byte
+}
 
 func (f *fakeDocker) Run(_ context.Context, args ...string) error {
 	f.calls = append(f.calls, append([]string(nil), args...))
@@ -22,6 +26,18 @@ func (f *fakeDocker) Run(_ context.Context, args ...string) error {
 type outputDocker struct {
 	fakeDocker
 	output []byte
+}
+
+type sizeDocker struct {
+	fakeDocker
+	outputs [][]byte
+}
+
+func (f *sizeDocker) Output(_ context.Context, args ...string) ([]byte, error) {
+	f.calls = append(f.calls, append([]string(nil), args...))
+	out := f.outputs[0]
+	f.outputs = f.outputs[1:]
+	return out, nil
 }
 
 func (f *outputDocker) Output(_ context.Context, args ...string) ([]byte, error) {
@@ -34,8 +50,9 @@ func (f *fakeDocker) Output(_ context.Context, args ...string) ([]byte, error) {
 	return []byte("[]"), nil
 }
 
-func (f *fakeDocker) Input(_ context.Context, _ []byte, args ...string) error {
+func (f *fakeDocker) Input(_ context.Context, input []byte, args ...string) error {
 	f.calls = append(f.calls, append([]string(nil), args...))
+	f.inputs = append(f.inputs, append([]byte(nil), input...))
 	return nil
 }
 
@@ -142,6 +159,48 @@ func TestUpdateSiteUsesIsolatedCLI(t *testing.T) {
 	call := strings.Join(f.calls[0], " ")
 	if !strings.Contains(call, "run --rm --no-deps cli sh -c") || !strings.Contains(call, "wp core update-db") || !strings.Contains(call, "wp plugin update --all") || !strings.Contains(call, "wp theme update --all") {
 		t.Fatalf("unexpected update command: %s", call)
+	}
+}
+
+func TestStorageMeasuresIsolatedVolumesAndBackups(t *testing.T) {
+	base := t.TempDir()
+	id := "0123456789abcdef"
+	backupDir := filepath.Join(base, "backups", id)
+	if err := os.MkdirAll(backupDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(backupDir, "archive.bin"), make([]byte, 1234), 0600); err != nil {
+		t.Fatal(err)
+	}
+	f := &sizeDocker{outputs: [][]byte{[]byte("10\t/data\n"), []byte("20\t/data\n")}}
+	w := &worker{backupsRoot: filepath.Join(base, "backups"), docker: f}
+	got, err := w.storage(context.Background(), core.StorageRequest{SiteIDs: []string{id}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[id].WordPressBytes != 10*1024 || got[id].DatabaseBytes != 20*1024 || got[id].BackupBytes != 1234 {
+		t.Fatalf("unexpected storage result: %#v", got[id])
+	}
+	if len(f.calls) != 2 || !strings.Contains(strings.Join(f.calls[0], " "), "wph-"+id+"_wordpress_data:/data:ro") || !strings.Contains(strings.Join(f.calls[1], " "), "wph-"+id+"_database_data:/data:ro") {
+		t.Fatalf("unexpected volume calls: %#v", f.calls)
+	}
+	if _, err := w.storage(context.Background(), core.StorageRequest{SiteIDs: []string{"../escape"}}); err == nil {
+		t.Fatal("unsafe storage request accepted")
+	}
+}
+
+func TestApplyMailWritesMUPluginWithoutLiteralCredentials(t *testing.T) {
+	f := &fakeDocker{}
+	w := &worker{docker: f}
+	mail := settings.Mail{Enabled: true, Host: "smtp.example.com", Port: 587, Encryption: "starttls", Username: "mailer", Password: "secret-password", FromEmail: "hello@example.com", FromName: "Example"}
+	if err := w.applyMail(context.Background(), settings.ApplyRequest{SiteID: "0123456789abcdef", Mail: mail}); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.calls) != 1 || !strings.Contains(strings.Join(f.calls[0], " "), "wph-wp-0123456789abcdef") {
+		t.Fatalf("unexpected Docker calls: %#v", f.calls)
+	}
+	if len(f.inputs) != 1 || strings.Contains(string(f.inputs[0]), mail.Password) || !strings.Contains(string(f.inputs[0]), "base64_decode") {
+		t.Fatalf("mail plugin did not encode credentials: %s", f.inputs[0])
 	}
 }
 

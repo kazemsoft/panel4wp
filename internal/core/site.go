@@ -22,16 +22,17 @@ const (
 )
 
 type Site struct {
-	ID         string    `json:"id"`
-	Domain     string    `json:"domain"`
-	Title      string    `json:"title"`
-	AdminEmail string    `json:"admin_email"`
-	MemoryMB   int       `json:"memory_mb,omitempty"`
-	CPUs       float64   `json:"cpus,omitempty"`
-	Status     Status    `json:"status"`
-	Error      string    `json:"error,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
-	Backups    []Backup  `json:"backups,omitempty"`
+	ID          string    `json:"id"`
+	Domain      string    `json:"domain"`
+	Title       string    `json:"title"`
+	AdminEmail  string    `json:"admin_email"`
+	MemoryMB    int       `json:"memory_mb,omitempty"`
+	CPUs        float64   `json:"cpus,omitempty"`
+	Status      Status    `json:"status"`
+	Error       string    `json:"error,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	Backups     []Backup  `json:"backups,omitempty"`
+	MailEnabled bool      `json:"mail_enabled,omitempty"`
 }
 
 type Backup struct {
@@ -94,6 +95,16 @@ type ContainerStats struct {
 type SiteStats struct {
 	WordPress *ContainerStats `json:"wordpress,omitempty"`
 	Database  *ContainerStats `json:"database,omitempty"`
+}
+
+type StorageRequest struct {
+	SiteIDs []string `json:"site_ids"`
+}
+
+type SiteStorage struct {
+	WordPressBytes int64 `json:"wordpress_bytes"`
+	DatabaseBytes  int64 `json:"database_bytes"`
+	BackupBytes    int64 `json:"backup_bytes"`
 }
 
 var domainLabel = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
