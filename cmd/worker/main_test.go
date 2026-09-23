@@ -19,6 +19,16 @@ func (f *fakeDocker) Run(_ context.Context, args ...string) error {
 	return nil
 }
 
+type outputDocker struct {
+	fakeDocker
+	output []byte
+}
+
+func (f *outputDocker) Output(_ context.Context, args ...string) ([]byte, error) {
+	f.calls = append(f.calls, append([]string(nil), args...))
+	return f.output, nil
+}
+
 func (f *fakeDocker) Output(_ context.Context, args ...string) ([]byte, error) {
 	f.calls = append(f.calls, append([]string(nil), args...))
 	return []byte("[]"), nil
@@ -90,6 +100,28 @@ func TestDatabaseManagerLifecycleAndLegacyComposeUpgrade(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(f.calls[len(f.calls)-1], " "), "rm -sf phpmyadmin") {
 		t.Fatalf("database manager was not removed: %#v", f.calls)
+	}
+}
+
+func TestStatsParsesOnlyRequestedSiteContainers(t *testing.T) {
+	id := "0123456789abcdef"
+	f := &outputDocker{output: []byte(
+		`{"Name":"wph-wp-0123456789abcdef","CPUPerc":"1.25%","MemUsage":"64MiB / 384MiB","MemPerc":"16.7%","NetIO":"1kB / 2kB","BlockIO":"3MB / 4MB","PIDs":"12"}` + "\n" +
+			`{"Name":"wph-db-0123456789abcdef","CPUPerc":"0.50%","MemUsage":"96MiB / 384MiB","MemPerc":"25.0%","NetIO":"2kB / 1kB","BlockIO":"5MB / 6MB","PIDs":"20"}` + "\n" +
+			`{"Name":"wph-wp-ffffffffffffffff","CPUPerc":"99%"}` + "\n")}
+	w := &worker{docker: f}
+	got, err := w.stats(context.Background(), core.StatsRequest{SiteIDs: []string{id}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[id].WordPress == nil || got[id].WordPress.CPU != "1.25%" || got[id].Database == nil || got[id].Database.MemoryPC != "25.0%" {
+		t.Fatalf("unexpected stats: %#v", got)
+	}
+	if len(got) != 1 || len(f.calls) != 1 || !strings.Contains(strings.Join(f.calls[0], " "), "wph-wp-"+id+" wph-db-"+id) {
+		t.Fatalf("unexpected Docker request: %#v, result %#v", f.calls, got)
+	}
+	if _, err := w.stats(context.Background(), core.StatsRequest{SiteIDs: []string{"../escape"}}); err == nil {
+		t.Fatal("invalid site ID reached stats")
 	}
 }
 

@@ -74,6 +74,24 @@ type FileContent struct {
 	Content []byte `json:"content"`
 }
 
+type StatsRequest struct {
+	SiteIDs []string `json:"site_ids"`
+}
+
+type ContainerStats struct {
+	CPU      string `json:"cpu"`
+	Memory   string `json:"memory"`
+	MemoryPC string `json:"memory_percent"`
+	NetIO    string `json:"network_io"`
+	BlockIO  string `json:"block_io"`
+	PIDs     string `json:"pids"`
+}
+
+type SiteStats struct {
+	WordPress *ContainerStats `json:"wordpress,omitempty"`
+	Database  *ContainerStats `json:"database,omitempty"`
+}
+
 var domainLabel = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
 var siteID = regexp.MustCompile(`^[0-9a-f]{16}$`)
 var backupID = regexp.MustCompile(`^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$`)

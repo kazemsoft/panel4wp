@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -319,6 +320,60 @@ func (w *worker) databaseAction(ctx context.Context, id, action string) error {
 	default:
 		return errors.New("invalid database action")
 	}
+}
+
+func (w *worker) stats(ctx context.Context, req core.StatsRequest) (map[string]core.SiteStats, error) {
+	if len(req.SiteIDs) == 0 || len(req.SiteIDs) > 100 {
+		return nil, errors.New("stats request must contain 1 to 100 sites")
+	}
+	seen := make(map[string]bool, len(req.SiteIDs))
+	args := []string{"stats", "--no-stream", "--format", "{{json .}}"}
+	for _, id := range req.SiteIDs {
+		if !core.ValidID(id) || seen[id] {
+			return nil, errors.New("invalid site ID in stats request")
+		}
+		seen[id] = true
+		args = append(args, "wph-wp-"+id, "wph-db-"+id)
+	}
+	out, err := w.docker.Output(ctx, args...)
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]core.SiteStats, len(req.SiteIDs))
+	type dockerStats struct {
+		Name, CPUPerc, MemUsage, MemPerc, NetIO, BlockIO, PIDs string
+	}
+	scanner := bufio.NewScanner(bytes.NewReader(out))
+	for scanner.Scan() {
+		var item dockerStats
+		if err := json.Unmarshal(scanner.Bytes(), &item); err != nil {
+			return nil, fmt.Errorf("parse Docker stats: %w", err)
+		}
+		var id, kind string
+		switch {
+		case strings.HasPrefix(item.Name, "wph-wp-"):
+			id, kind = strings.TrimPrefix(item.Name, "wph-wp-"), "wordpress"
+		case strings.HasPrefix(item.Name, "wph-db-"):
+			id, kind = strings.TrimPrefix(item.Name, "wph-db-"), "database"
+		default:
+			continue
+		}
+		if !seen[id] {
+			continue
+		}
+		value := &core.ContainerStats{CPU: item.CPUPerc, Memory: item.MemUsage, MemoryPC: item.MemPerc, NetIO: item.NetIO, BlockIO: item.BlockIO, PIDs: item.PIDs}
+		site := result[id]
+		if kind == "wordpress" {
+			site.WordPress = value
+		} else {
+			site.Database = value
+		}
+		result[id] = site
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func (w *worker) migrateLegacyNetworks(ctx context.Context) error {
@@ -721,6 +776,13 @@ func (w *worker) ServeHTTP(resp http.ResponseWriter, req *http.Request) {
 			return
 		}
 		err = w.databaseAction(ctx, body.ID, body.Action)
+	} else if req.URL.Path == "/stats" {
+		var body core.StatsRequest
+		if decodeErr := json.NewDecoder(req.Body).Decode(&body); decodeErr != nil {
+			http.Error(resp, "invalid request", http.StatusBadRequest)
+			return
+		}
+		result, err = w.stats(ctx, body)
 	} else if req.URL.Path == "/restore" {
 		var body core.RestoreRequest
 		if decodeErr := json.NewDecoder(req.Body).Decode(&body); decodeErr != nil {

@@ -35,7 +35,7 @@ body{font:16px system-ui,sans-serif;background:#f5f7fa;color:#17212b;max-width:1
 {{if .Error}}<p class="error">{{.Error}}</p>{{end}}{{if .Message}}<p class="success">{{.Message}}</p>{{end}}
 {{if not .LoggedIn}}<section style="max-width:380px"><h2>Administrator login</h2><form action="/login" method="post"><label>Password<input type="password" name="password" autocomplete="current-password" required></label><p><button>Log in</button></p></form></section>{{else}}
 <main><section><h2>Create WordPress site</h2><form action="/sites" method="post"><input type="hidden" name="csrf" value="{{.CSRF}}"><label>Domain<input name="domain" placeholder="example.com; blank for local test"></label><label>Site title<input name="title" required maxlength="120"></label><label>WordPress admin email<input type="email" name="email" required></label><label>Resources per WordPress and database container<select name="plan"><option value="small">Small · 384 MB · 0.5 CPU</option><option value="standard" selected>Standard · 768 MB · 1 CPU</option><option value="large">Large · 1536 MB · 2 CPUs</option></select></label><p><button>Create site</button></p></form><small>Blank domain creates an HTTP-only *.localhost site for testing on this computer. Public domains require DNS to point to this server.</small></section>
-<section><h2>Sites</h2>{{if not .Sites}}<p class="muted">No sites yet.</p>{{else}}<table><thead><tr><th>Site</th><th>Status</th><th>Actions</th></tr></thead><tbody>{{range .Sites}}{{$site := .}}<tr><td><strong>{{.Title}}</strong><br><a href="{{if hasSuffix .Domain ".localhost"}}http{{else}}https{{end}}://{{.Domain}}" target="_blank" rel="noopener">{{.Domain}}</a><br><small>{{.ID}} · {{.MemoryMB}} MB · {{.CPUs}} CPU</small>{{if .Error}}<p class="error">{{.Error}}</p>{{end}}</td><td><span class="badge">{{.Status}}</span></td><td>
+<section><h2>Sites</h2>{{if not .Sites}}<p class="muted">No sites yet.</p>{{else}}<p><a href="/?stats=1">Refresh live resource usage</a></p>{{if .StatsError}}<p class="error">{{.StatsError}}</p>{{end}}<table><thead><tr><th>Site</th><th>Status</th><th>Actions</th></tr></thead><tbody>{{range .Sites}}{{$site := .}}{{$stats := index $.Stats .ID}}<tr><td><strong>{{.Title}}</strong><br><a href="{{if hasSuffix .Domain ".localhost"}}http{{else}}https{{end}}://{{.Domain}}" target="_blank" rel="noopener">{{.Domain}}</a><br><small>{{.ID}} · {{.MemoryMB}} MB · {{.CPUs}} CPU</small>{{if $stats}}<details><summary>Live resource usage</summary>{{if $stats.WordPress}}<p><small><strong>WordPress</strong> · CPU {{$stats.WordPress.CPU}} · Memory {{$stats.WordPress.Memory}} ({{$stats.WordPress.MemoryPC}}) · Network {{$stats.WordPress.NetIO}} · Disk I/O {{$stats.WordPress.BlockIO}} · PIDs {{$stats.WordPress.PIDs}}</small></p>{{end}}{{if $stats.Database}}<p><small><strong>Database</strong> · CPU {{$stats.Database.CPU}} · Memory {{$stats.Database.Memory}} ({{$stats.Database.MemoryPC}}) · Network {{$stats.Database.NetIO}} · Disk I/O {{$stats.Database.BlockIO}} · PIDs {{$stats.Database.PIDs}}</small></p>{{end}}</details>{{end}}{{if .Error}}<p class="error">{{.Error}}</p>{{end}}</td><td><span class="badge">{{.Status}}</span></td><td>
 {{if eq .Status "running"}}<form class="inline" action="/sites/{{.ID}}/stop" method="post"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="secondary">Stop</button></form>{{end}}
 {{if eq .Status "running"}}<form class="inline" action="/sites/{{.ID}}/backup" method="post"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button>Back up now</button></form>{{end}}
 {{if eq .Status "running"}}<p><a href="/sites/{{.ID}}/files">Manage wp-content files</a></p>{{end}}
@@ -72,11 +72,13 @@ type filesView struct {
 }
 
 type view struct {
-	LoggedIn bool
-	CSRF     string
-	Error    string
-	Message  string
-	Sites    []core.Site
+	LoggedIn   bool
+	CSRF       string
+	Error      string
+	Message    string
+	Sites      []core.Site
+	Stats      map[string]core.SiteStats
+	StatsError string
 }
 
 type app struct {
@@ -150,6 +152,28 @@ func (a *app) render(w http.ResponseWriter, r *http.Request, v view) {
 			return
 		}
 		v.Sites = sites
+		if r.URL.Query().Get("stats") == "1" && len(sites) > 0 {
+			ids := make([]string, 0, len(sites))
+			for _, site := range sites {
+				if site.Status == core.StatusRunning {
+					ids = append(ids, site.ID)
+				}
+			}
+			if len(ids) > 0 {
+				v.Stats = make(map[string]core.SiteStats, len(ids))
+				for start := 0; start < len(ids); start += 100 {
+					end := min(start+100, len(ids))
+					var batch map[string]core.SiteStats
+					if err := a.callWorker("/stats", core.StatsRequest{SiteIDs: ids[start:end]}, &batch); err != nil {
+						v.StatsError = "Unable to load live usage: " + err.Error()
+						break
+					}
+					for id, stats := range batch {
+						v.Stats[id] = stats
+					}
+				}
+			}
+		}
 		if c, err := r.Cookie("wph_session"); err == nil {
 			v.CSRF = a.csrf(c.Value)
 		}
