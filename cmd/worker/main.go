@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -22,7 +23,7 @@ import (
 const composeTemplate = `services:
   wordpress:
     image: wordpress:php8.3-apache
-    container_name: wph-wp-%[1]s
+    container_name: wph-wp-%s
     restart: unless-stopped
     environment:
       WORDPRESS_DB_HOST: db:3306
@@ -36,13 +37,13 @@ const composeTemplate = `services:
     depends_on:
       db:
         condition: service_healthy
-    mem_limit: %[2]dm
-    cpus: %[3].2f
+    mem_limit: %dm
+    cpus: %.2f
     pids_limit: 200
     security_opt: [no-new-privileges:true]
   db:
     image: mariadb:11.8
-    container_name: wph-db-%[1]s
+    container_name: wph-db-%s
     restart: unless-stopped
     environment:
       MARIADB_DATABASE: wordpress
@@ -58,8 +59,8 @@ const composeTemplate = `services:
       interval: 10s
       timeout: 5s
       retries: 12
-    mem_limit: %[2]dm
-    cpus: %[3].2f
+    mem_limit: %dm
+    cpus: %.2f
     pids_limit: 200
     security_opt: [no-new-privileges:true]
   cli:
@@ -79,6 +80,8 @@ volumes:
   database_data:
 networks:
   frontend:
+    external: true
+    name: wphost-sites-proxy
   database:
     internal: true
 secrets:
@@ -96,16 +99,37 @@ secrets:
     file: ./secrets/admin_email
 `
 
-const wpInstallScript = `if wp core is-installed >/dev/null 2>&1; then wp user update admin --user_pass="$(cat /run/secrets/admin_password)" --user_email="$(cat /run/secrets/admin_email)"; else wp core install --url="$(cat /run/secrets/site_url)" --title="$(cat /run/secrets/site_title)" --admin_user=admin --admin_password="$(cat /run/secrets/admin_password)" --admin_email="$(cat /run/secrets/admin_email)" --skip-email; fi`
+const wpInstallScript = `i=0; while [ ! -f wp-includes/version.php ] && [ "$i" -lt 120 ]; do i=$((i+1)); sleep 1; done; if [ ! -f wp-includes/version.php ]; then echo "WordPress files were not ready after 120 seconds" >&2; exit 1; fi; if wp core is-installed >/dev/null 2>&1; then wp user update admin --user_pass="$(cat /run/secrets/admin_password)" --user_email="$(cat /run/secrets/admin_email)"; else wp core install --url="$(cat /run/secrets/site_url)" --title="$(cat /run/secrets/site_title)" --admin_user=admin --admin_password="$(cat /run/secrets/admin_password)" --admin_email="$(cat /run/secrets/admin_email)" --skip-email; fi`
 
 type runner interface {
 	Run(context.Context, ...string) error
+	Output(context.Context, ...string) ([]byte, error)
+	Input(context.Context, []byte, ...string) error
 }
 
 type dockerRunner struct{}
 
 func (dockerRunner) Run(ctx context.Context, args ...string) error {
 	cmd := exec.CommandContext(ctx, "docker", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("docker %s failed: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func (dockerRunner) Output(ctx context.Context, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("docker %s failed: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+	}
+	return out, nil
+}
+
+func (dockerRunner) Input(ctx context.Context, input []byte, args ...string) error {
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd.Stdin = bytes.NewReader(input)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("docker %s failed: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
@@ -130,6 +154,19 @@ type backupManifest struct {
 	WordPressSHA256 string    `json:"wordpress_sha256"`
 }
 
+const legacyFrontendNetwork = "networks:\n  frontend:\n  database:\n    internal: true"
+const sharedFrontendNetwork = "networks:\n  frontend:\n    external: true\n    name: wphost-sites-proxy\n  database:\n    internal: true"
+
+const listFilesPHP = `$root=realpath("/var/www/html/wp-content");$rel=$argv[1]??"";$p=realpath($root.($rel===""?"":"/".$rel));if($root===false||$p===false||($p!==$root&&!str_starts_with($p,$root."/"))||!is_dir($p)){fwrite(STDERR,"invalid directory");exit(3);}$out=[];foreach(scandir($p) as $n){if($n==="."||$n==="..")continue;$f=$p."/".$n;$s=lstat($f);$type=is_link($f)?"link":(is_dir($f)?"directory":"file");$out[]=["name"=>$n,"type"=>$type,"size"=>$type==="file"?(int)$s["size"]:0,"modified"=>(int)$s["mtime"]];}usort($out,fn($a,$b)=>($a["type"]==="directory"?0:1)<=>($b["type"]==="directory"?0:1)?:strnatcasecmp($a["name"],$b["name"]));echo json_encode($out,JSON_UNESCAPED_UNICODE|JSON_INVALID_UTF8_SUBSTITUTE);`
+
+const readFilePHP = `$root=realpath("/var/www/html/wp-content");$p=realpath($root."/".$argv[1]);if($root===false||$p===false||!str_starts_with($p,$root."/")||!is_file($p)||is_link($p)){fwrite(STDERR,"invalid file");exit(3);}if(filesize($p)>10485760){fwrite(STDERR,"file exceeds 10 MB");exit(4);}readfile($p);`
+
+const writeFilePHP = `$root=realpath("/var/www/html/wp-content");$target=$root."/".$argv[1];$parent=realpath(dirname($target));if($root===false||$parent===false||($parent!==$root&&!str_starts_with($parent,$root."/"))||(file_exists($target)&&is_link($target))){fwrite(STDERR,"invalid file");exit(3);}$data=file_get_contents("php://stdin");if(strlen($data)>10485760){fwrite(STDERR,"file exceeds 10 MB");exit(4);}if(file_put_contents($target,$data,LOCK_EX)===false){fwrite(STDERR,"write failed");exit(5);}chmod($target,0644);`
+
+const makeDirPHP = `$root=realpath("/var/www/html/wp-content");$target=$root."/".$argv[1];$parent=realpath(dirname($target));if($root===false||$parent===false||($parent!==$root&&!str_starts_with($parent,$root."/"))||file_exists($target)){fwrite(STDERR,"invalid directory");exit(3);}if(!mkdir($target,0755)){fwrite(STDERR,"mkdir failed");exit(5);}`
+
+const deleteFilePHP = `$root=realpath("/var/www/html/wp-content");$p=realpath($root."/".$argv[1]);if($root===false||$p===false||!str_starts_with($p,$root."/")||is_link($p)){fwrite(STDERR,"invalid path");exit(3);}$ok=is_dir($p)?rmdir($p):unlink($p);if(!$ok){fwrite(STDERR,"delete failed; directories must be empty");exit(5);}`
+
 func (w *worker) siteDir(id string) string { return filepath.Join(w.root, id) }
 
 func (w *worker) backupDir(siteID, backupID string) string {
@@ -139,6 +176,41 @@ func (w *worker) backupDir(siteID, backupID string) string {
 func (w *worker) composeArgs(id string, args ...string) []string {
 	base := []string{"compose", "-p", "wph-" + id, "-f", filepath.Join(w.siteDir(id), "compose.yaml")}
 	return append(base, args...)
+}
+
+func (w *worker) migrateLegacyNetworks(ctx context.Context) error {
+	entries, err := os.ReadDir(w.root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		id := entry.Name()
+		if !entry.IsDir() || !core.ValidID(id) {
+			continue
+		}
+		composePath := filepath.Join(w.siteDir(id), "compose.yaml")
+		data, err := os.ReadFile(composePath)
+		if err != nil {
+			return err
+		}
+		if !strings.Contains(string(data), legacyFrontendNetwork) {
+			continue
+		}
+		updated := strings.Replace(string(data), legacyFrontendNetwork, sharedFrontendNetwork, 1)
+		if err := os.WriteFile(composePath, []byte(updated), 0600); err != nil {
+			return err
+		}
+		running, inspectErr := w.docker.Output(ctx, "inspect", "--format", "{{.State.Running}}", "wph-wp-"+id)
+		if inspectErr == nil && strings.TrimSpace(string(running)) == "true" {
+			if err := w.docker.Run(ctx, w.composeArgs(id, "up", "-d", "--wait")...); err != nil {
+				return fmt.Errorf("migrate site %s: %w", id, err)
+			}
+		}
+	}
+	return nil
 }
 
 func writeSecret(dir, name, value string) error {
@@ -245,6 +317,68 @@ func (w *worker) verifyBackup(siteID, backupID string) (string, error) {
 	return dir, nil
 }
 
+func (w *worker) validateFileRequest(req core.FileRequest, allowEmpty bool) error {
+	if !core.ValidID(req.SiteID) || !core.ValidRelativePath(req.Path, allowEmpty) {
+		return errors.New("invalid file path")
+	}
+	if _, err := os.Stat(filepath.Join(w.siteDir(req.SiteID), "compose.yaml")); err != nil {
+		return errors.New("site does not exist")
+	}
+	return nil
+}
+
+func (w *worker) listFiles(ctx context.Context, req core.FileRequest) ([]core.FileEntry, error) {
+	if err := w.validateFileRequest(req, true); err != nil {
+		return nil, err
+	}
+	out, err := w.docker.Output(ctx, "exec", "wph-wp-"+req.SiteID, "php", "-d", "display_errors=stderr", "-r", listFilesPHP, req.Path)
+	if err != nil {
+		return nil, err
+	}
+	var entries []core.FileEntry
+	if len(out) > 4<<20 || json.Unmarshal(out, &entries) != nil {
+		return nil, errors.New("invalid or excessive directory listing")
+	}
+	return entries, nil
+}
+
+func (w *worker) readFile(ctx context.Context, req core.FileRequest) (core.FileContent, error) {
+	if err := w.validateFileRequest(req, false); err != nil {
+		return core.FileContent{}, err
+	}
+	out, err := w.docker.Output(ctx, "exec", "wph-wp-"+req.SiteID, "php", "-d", "display_errors=stderr", "-r", readFilePHP, req.Path)
+	if err != nil {
+		return core.FileContent{}, err
+	}
+	if len(out) > 10<<20 {
+		return core.FileContent{}, errors.New("file exceeds 10 MB")
+	}
+	return core.FileContent{Name: filepath.Base(req.Path), Content: out}, nil
+}
+
+func (w *worker) writeFile(ctx context.Context, req core.FileRequest) error {
+	if err := w.validateFileRequest(req, false); err != nil {
+		return err
+	}
+	if len(req.Content) > 10<<20 {
+		return errors.New("file exceeds 10 MB")
+	}
+	return w.docker.Input(ctx, req.Content, "exec", "-i", "wph-wp-"+req.SiteID, "php", "-d", "display_errors=stderr", "-r", writeFilePHP, req.Path)
+}
+
+func (w *worker) fileAction(ctx context.Context, req core.FileRequest, action string) error {
+	if err := w.validateFileRequest(req, false); err != nil {
+		return err
+	}
+	script := deleteFilePHP
+	if action == "mkdir" {
+		script = makeDirPHP
+	} else if action != "delete" {
+		return errors.New("invalid file action")
+	}
+	return w.docker.Run(ctx, "exec", "wph-wp-"+req.SiteID, "php", "-d", "display_errors=stderr", "-r", script, req.Path)
+}
+
 func (w *worker) restore(ctx context.Context, req core.RestoreRequest) error {
 	if err := core.ValidateSite(req.Site); err != nil {
 		return err
@@ -339,14 +473,11 @@ func (w *worker) create(ctx context.Context, req core.CreateRequest) error {
 		}
 	}
 	memory, cpus := core.ResourceLimits(req.Site)
-	if err := os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte(fmt.Sprintf(composeTemplate, req.Site.ID, memory, cpus)), 0600); err != nil {
+	compose := fmt.Sprintf(composeTemplate, req.Site.ID, memory, cpus, req.Site.ID, memory, cpus)
+	if err := os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte(compose), 0600); err != nil {
 		return err
 	}
 	if err := w.docker.Run(ctx, w.composeArgs(req.Site.ID, "up", "-d", "--wait")...); err != nil {
-		return err
-	}
-	network := "wph-" + req.Site.ID + "_frontend"
-	if err := w.docker.Run(ctx, "network", "connect", network, "wph-caddy"); err != nil && !strings.Contains(err.Error(), "already exists") {
 		return err
 	}
 	if err := os.MkdirAll(w.routes, 0700); err != nil {
@@ -358,9 +489,6 @@ func (w *worker) create(ctx context.Context, req core.CreateRequest) error {
 	}
 	route := fmt.Sprintf("%s {\n  reverse_proxy wph-wp-%s:80\n}\n", address, req.Site.ID)
 	if err := os.WriteFile(filepath.Join(w.routes, req.Site.ID+".caddy"), []byte(route), 0600); err != nil {
-		return err
-	}
-	if err := w.docker.Run(ctx, "exec", "wph-caddy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile"); err != nil {
 		return err
 	}
 	return w.docker.Run(ctx, w.composeArgs(req.Site.ID, "run", "--rm", "--no-deps", "cli", "sh", "-c", wpInstallScript)...)
@@ -378,22 +506,11 @@ func (w *worker) action(ctx context.Context, id, action string) error {
 		if err := w.docker.Run(ctx, w.composeArgs(id, "up", "-d", "--wait")...); err != nil {
 			return err
 		}
-		network := "wph-" + id + "_frontend"
-		if err := w.docker.Run(ctx, "network", "connect", network, "wph-caddy"); err != nil && !strings.Contains(err.Error(), "already exists") {
-			return err
-		}
 		return nil
 	case "stop":
 		return w.docker.Run(ctx, w.composeArgs(id, "stop")...)
 	case "delete":
 		if err := os.Remove(filepath.Join(w.routes, id+".caddy")); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-		if err := w.docker.Run(ctx, "exec", "wph-caddy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile"); err != nil {
-			return err
-		}
-		network := "wph-" + id + "_frontend"
-		if err := w.docker.Run(ctx, "network", "disconnect", "-f", network, "wph-caddy"); err != nil && !strings.Contains(err.Error(), "not connected") && !strings.Contains(err.Error(), "not found") {
 			return err
 		}
 		if err := w.docker.Run(ctx, w.composeArgs(id, "down", "--volumes")...); err != nil {
@@ -416,11 +533,16 @@ func (w *worker) ServeHTTP(resp http.ResponseWriter, req *http.Request) {
 		http.Error(resp, "forbidden", http.StatusForbidden)
 		return
 	}
-	req.Body = http.MaxBytesReader(resp, req.Body, 8192)
+	maxBody := int64(8192)
+	if req.URL.Path == "/files/write" {
+		maxBody = 15 << 20
+	}
+	req.Body = http.MaxBytesReader(resp, req.Body, maxBody)
 	ctx, cancel := context.WithTimeout(req.Context(), 20*time.Minute)
 	defer cancel()
 	var err error
 	var result any
+	reloadCaddy := false
 	if req.URL.Path == "/create" {
 		var body core.CreateRequest
 		if decodeErr := json.NewDecoder(req.Body).Decode(&body); decodeErr != nil {
@@ -428,6 +550,7 @@ func (w *worker) ServeHTTP(resp http.ResponseWriter, req *http.Request) {
 			return
 		}
 		err = w.create(ctx, body)
+		reloadCaddy = err == nil
 	} else if req.URL.Path == "/action" {
 		var body struct{ ID, Action string }
 		if decodeErr := json.NewDecoder(req.Body).Decode(&body); decodeErr != nil {
@@ -435,6 +558,7 @@ func (w *worker) ServeHTTP(resp http.ResponseWriter, req *http.Request) {
 			return
 		}
 		err = w.action(ctx, body.ID, body.Action)
+		reloadCaddy = err == nil && body.Action == "delete"
 	} else if req.URL.Path == "/backup" {
 		var body core.BackupRequest
 		if decodeErr := json.NewDecoder(req.Body).Decode(&body); decodeErr != nil {
@@ -449,6 +573,24 @@ func (w *worker) ServeHTTP(resp http.ResponseWriter, req *http.Request) {
 			return
 		}
 		err = w.restore(ctx, body)
+	} else if req.URL.Path == "/files/list" || req.URL.Path == "/files/read" || req.URL.Path == "/files/write" || req.URL.Path == "/files/delete" || req.URL.Path == "/files/mkdir" {
+		var body core.FileRequest
+		if decodeErr := json.NewDecoder(req.Body).Decode(&body); decodeErr != nil {
+			http.Error(resp, "invalid request", http.StatusBadRequest)
+			return
+		}
+		switch req.URL.Path {
+		case "/files/list":
+			result, err = w.listFiles(ctx, body)
+		case "/files/read":
+			result, err = w.readFile(ctx, body)
+		case "/files/write":
+			err = w.writeFile(ctx, body)
+		case "/files/delete":
+			err = w.fileAction(ctx, body, "delete")
+		case "/files/mkdir":
+			err = w.fileAction(ctx, body, "mkdir")
+		}
 	} else {
 		http.NotFound(resp, req)
 		return
@@ -460,11 +602,26 @@ func (w *worker) ServeHTTP(resp http.ResponseWriter, req *http.Request) {
 	}
 	if result == nil {
 		resp.WriteHeader(http.StatusNoContent)
-		return
+	} else {
+		resp.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(resp).Encode(result); err != nil {
+			log.Printf("worker response failed: %v", err)
+		}
 	}
-	resp.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(resp).Encode(result); err != nil {
-		log.Printf("worker response failed: %v", err)
+	if flusher, ok := resp.(http.Flusher); ok {
+		flusher.Flush()
+	}
+	if reloadCaddy {
+		go func() {
+			// The administrator request itself is proxied through Caddy. Give that
+			// small HTML response time to finish before swapping Caddy's config.
+			time.Sleep(2 * time.Second)
+			reloadCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := w.docker.Run(reloadCtx, "exec", "wph-caddy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile"); err != nil {
+				log.Printf("delayed Caddy reload failed: %v", err)
+			}
+		}()
 	}
 }
 
@@ -478,5 +635,10 @@ func main() {
 		log.Fatal("WPH_DATA_DIR must be an absolute host path")
 	}
 	w := &worker{root: filepath.Join(dataDir, "sites"), backupsRoot: filepath.Join(dataDir, "backups"), routes: "/routes", token: token, docker: dockerRunner{}}
+	migrateCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	if err := w.migrateLegacyNetworks(migrateCtx); err != nil {
+		log.Fatal(err)
+	}
 	log.Fatal(http.ListenAndServe(":8081", w))
 }

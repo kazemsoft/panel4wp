@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - run: go test -race ./...
+      - run: go vet ./...
+      - run: docker compose config --quiet
+        env:
+          PANEL_ADMIN_HASH: test
+          PANEL_SESSION_KEY: test-test-test-test-test-test-test-test
+          WORKER_TOKEN: test-test-test-test-test-test-test-test
+          PANEL_DOMAIN: http://localhost
+          WPH_DATA_DIR: /tmp/panel4wp
+      - run: docker compose build panel worker
+        env:
+          PANEL_ADMIN_HASH: test
+          PANEL_SESSION_KEY: test-test-test-test-test-test-test-test
+          WORKER_TOKEN: test-test-test-test-test-test-test-test
+          PANEL_DOMAIN: http://localhost
+          WPH_DATA_DIR: /tmp/panel4wp

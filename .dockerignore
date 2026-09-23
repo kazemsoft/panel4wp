@@ -4,3 +4,4 @@ data
 work
 *.log
 *.db
+.DS_Store

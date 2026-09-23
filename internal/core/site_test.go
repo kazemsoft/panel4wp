@@ -63,3 +63,19 @@ func TestResourceLimits(t *testing.T) {
 		t.Fatal("accepted unsafe memory limit")
 	}
 }
+
+func TestValidRelativePath(t *testing.T) {
+	for _, path := range []string{"plugins", "themes/my-theme/style.css", "uploads/2026/image.jpg"} {
+		if !ValidRelativePath(path, false) {
+			t.Errorf("valid path rejected: %q", path)
+		}
+	}
+	if !ValidRelativePath("", true) {
+		t.Fatal("empty root path rejected")
+	}
+	for _, path := range []string{"", ".", "..", "../secret", "themes/../secret", "/etc/passwd", "a//b", "a\\b", "a\nb"} {
+		if ValidRelativePath(path, false) {
+			t.Errorf("unsafe path accepted: %q", path)
+		}
+	}
+}

@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +18,29 @@ import (
 
 	"github.com/kazemsoft/panel4wp/internal/store"
 )
+
+func TestMultipartCSRF(t *testing.T) {
+	a := &app{sessionKey: []byte(strings.Repeat("s", 64))}
+	payload := strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10)
+	session := payload + "." + a.sign(payload)
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("csrf", a.csrf(session)); err != nil {
+		t.Fatal(err)
+	}
+	part, err := writer.CreateFormFile("file", "hello.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = part.Write([]byte("hello"))
+	_ = writer.Close()
+	req := httptest.NewRequest(http.MethodPost, "/upload", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.AddCookie(&http.Cookie{Name: "wph_session", Value: session})
+	if !a.checkCSRF(req) {
+		t.Fatal("valid multipart CSRF token rejected")
+	}
+}
 
 func TestLoginCreateAndRejectMissingCSRF(t *testing.T) {
 	workerCalls := 0
@@ -60,10 +86,30 @@ func TestLoginCreateAndRejectMissingCSRF(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, _ := io.ReadAll(createResp.Body)
 	createResp.Body.Close()
-	if createResp.StatusCode != http.StatusOK || !strings.Contains(string(body), "Site created") || workerCalls != 1 {
-		t.Fatalf("create failed: %d, %s, worker calls %d", createResp.StatusCode, body, workerCalls)
+	if createResp.StatusCode != http.StatusSeeOther || workerCalls != 1 {
+		t.Fatalf("create failed: %d, worker calls %d", createResp.StatusCode, workerCalls)
+	}
+	var flashCookie *http.Cookie
+	for _, candidate := range createResp.Cookies() {
+		if candidate.Name == "wph_flash" {
+			flashCookie = candidate
+		}
+	}
+	if flashCookie == nil {
+		t.Fatal("create result did not set a flash cookie")
+	}
+	resultReq, _ := http.NewRequest(http.MethodGet, server.URL+"/", nil)
+	resultReq.AddCookie(cookie)
+	resultReq.AddCookie(flashCookie)
+	resultResp, err := client.Do(resultReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resultResp.Body)
+	resultResp.Body.Close()
+	if !strings.Contains(string(body), "Site created") {
+		t.Fatalf("one-time creation result missing: %s", body)
 	}
 	sites, err := a.store.List()
 	if err != nil || len(sites) != 1 || sites[0].Domain != "example.com" || sites[0].MemoryMB != 768 || sites[0].CPUs != 1 {

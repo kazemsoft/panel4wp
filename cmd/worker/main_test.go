@@ -19,6 +19,16 @@ func (f *fakeDocker) Run(_ context.Context, args ...string) error {
 	return nil
 }
 
+func (f *fakeDocker) Output(_ context.Context, args ...string) ([]byte, error) {
+	f.calls = append(f.calls, append([]string(nil), args...))
+	return []byte("[]"), nil
+}
+
+func (f *fakeDocker) Input(_ context.Context, _ []byte, args ...string) error {
+	f.calls = append(f.calls, append([]string(nil), args...))
+	return nil
+}
+
 func TestCreateAndDeleteSite(t *testing.T) {
 	base := t.TempDir()
 	f := &fakeDocker{}
@@ -29,15 +39,15 @@ func TestCreateAndDeleteSite(t *testing.T) {
 		t.Fatal(err)
 	}
 	compose, err := os.ReadFile(filepath.Join(w.siteDir(site.ID), "compose.yaml"))
-	if err != nil || !strings.Contains(string(compose), "internal: true") || !strings.Contains(string(compose), "wph-wp-"+site.ID) || !strings.Contains(string(compose), "mem_limit: 512m") {
+	if err != nil || !strings.Contains(string(compose), "internal: true") || !strings.Contains(string(compose), "name: wphost-sites-proxy") || !strings.Contains(string(compose), "wph-wp-"+site.ID) || !strings.Contains(string(compose), "mem_limit: 512m") || strings.Contains(string(compose), "%!") {
 		t.Fatalf("bad site compose: %v, %s", err, compose)
 	}
 	route, err := os.ReadFile(filepath.Join(w.routes, site.ID+".caddy"))
 	if err != nil || !strings.Contains(string(route), "http://one.localhost") {
 		t.Fatalf("bad route: %v, %s", err, route)
 	}
-	if len(f.calls) != 4 {
-		t.Fatalf("expected compose up, network connect, caddy reload, WP CLI: %#v", f.calls)
+	if len(f.calls) != 2 {
+		t.Fatalf("expected compose up and WP CLI: %#v", f.calls)
 	}
 	if err := os.MkdirAll(filepath.Join(w.backupsRoot, site.ID, "old-backup"), 0700); err != nil {
 		t.Fatal(err)
@@ -118,5 +128,49 @@ func TestVerifyBackupRejectsTampering(t *testing.T) {
 	}
 	if _, err := w.verifyBackup("../escape", backupID); err == nil {
 		t.Fatal("path traversal accepted")
+	}
+}
+
+func TestFileRequestsRejectTraversalBeforeDocker(t *testing.T) {
+	base := t.TempDir()
+	f := &fakeDocker{}
+	w := &worker{root: filepath.Join(base, "sites"), docker: f}
+	if err := os.MkdirAll(w.siteDir("0123456789abcdef"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(w.siteDir("0123456789abcdef"), "compose.yaml"), []byte("services: {}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := w.listFiles(context.Background(), core.FileRequest{SiteID: "0123456789abcdef", Path: "../secrets"})
+	if err == nil {
+		t.Fatal("path traversal accepted")
+	}
+	if len(f.calls) != 0 {
+		t.Fatal("unsafe path reached Docker")
+	}
+	if _, err := w.listFiles(context.Background(), core.FileRequest{SiteID: "0123456789abcdef", Path: ""}); err != nil {
+		t.Fatalf("safe root listing rejected: %v", err)
+	}
+}
+
+func TestMigrateLegacyNetworkConfig(t *testing.T) {
+	base := t.TempDir()
+	f := &fakeDocker{}
+	w := &worker{root: filepath.Join(base, "sites"), docker: f}
+	id := "0123456789abcdef"
+	if err := os.MkdirAll(w.siteDir(id), 0700); err != nil {
+		t.Fatal(err)
+	}
+	legacy := "services: {}\n" + legacyFrontendNetwork + "\n"
+	composePath := filepath.Join(w.siteDir(id), "compose.yaml")
+	if err := os.WriteFile(composePath, []byte(legacy), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.migrateLegacyNetworks(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := os.ReadFile(composePath)
+	if err != nil || !strings.Contains(string(updated), sharedFrontendNetwork) || strings.Contains(string(updated), legacyFrontendNetwork) {
+		t.Fatalf("legacy network was not migrated: %v, %s", err, updated)
 	}
 }

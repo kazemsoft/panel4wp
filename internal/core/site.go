@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -55,6 +56,24 @@ type RestoreRequest struct {
 	SafetyBackupID string `json:"safety_backup_id"`
 }
 
+type FileRequest struct {
+	SiteID  string `json:"site_id"`
+	Path    string `json:"path"`
+	Content []byte `json:"content,omitempty"`
+}
+
+type FileEntry struct {
+	Name     string `json:"name"`
+	Type     string `json:"type"`
+	Size     int64  `json:"size"`
+	Modified int64  `json:"modified"`
+}
+
+type FileContent struct {
+	Name    string `json:"name"`
+	Content []byte `json:"content"`
+}
+
 var domainLabel = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
 var siteID = regexp.MustCompile(`^[0-9a-f]{16}$`)
 var backupID = regexp.MustCompile(`^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$`)
@@ -78,6 +97,25 @@ func RandomPassword() (string, error) {
 func ValidID(id string) bool { return siteID.MatchString(id) }
 
 func ValidBackupID(id string) bool { return backupID.MatchString(id) }
+
+func ValidRelativePath(path string, allowEmpty bool) bool {
+	if path == "" {
+		return allowEmpty
+	}
+	if len(path) > 512 || strings.HasPrefix(path, "/") || strings.ContainsAny(path, "\x00\n\r\\") {
+		return false
+	}
+	clean := filepath.Clean(path)
+	if clean == "." || clean != path {
+		return false
+	}
+	for _, part := range strings.Split(path, "/") {
+		if part == "" || part == "." || part == ".." {
+			return false
+		}
+	}
+	return true
+}
 
 func NewBackupID(now time.Time) (string, error) {
 	var b [4]byte

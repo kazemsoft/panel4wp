@@ -11,9 +11,12 @@ import (
 	"html/template"
 	"io"
 	"log"
+	"mime"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,10 +37,37 @@ body{font:16px system-ui,sans-serif;background:#f5f7fa;color:#17212b;max-width:1
 <section><h2>Sites</h2>{{if not .Sites}}<p class="muted">No sites yet.</p>{{else}}<table><thead><tr><th>Site</th><th>Status</th><th>Actions</th></tr></thead><tbody>{{range .Sites}}{{$site := .}}<tr><td><strong>{{.Title}}</strong><br><a href="{{if hasSuffix .Domain ".localhost"}}http{{else}}https{{end}}://{{.Domain}}" target="_blank" rel="noopener">{{.Domain}}</a><br><small>{{.ID}} · {{.MemoryMB}} MB · {{.CPUs}} CPU</small>{{if .Error}}<p class="error">{{.Error}}</p>{{end}}</td><td><span class="badge">{{.Status}}</span></td><td>
 {{if eq .Status "running"}}<form class="inline" action="/sites/{{.ID}}/stop" method="post"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="secondary">Stop</button></form>{{end}}
 {{if eq .Status "running"}}<form class="inline" action="/sites/{{.ID}}/backup" method="post"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button>Back up now</button></form>{{end}}
+{{if eq .Status "running"}}<p><a href="/sites/{{.ID}}/files">Manage wp-content files</a></p>{{end}}
 {{if eq .Status "stopped"}}<form class="inline" action="/sites/{{.ID}}/start" method="post"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button>Start</button></form>{{end}}
 {{if eq .Status "failed"}}<form class="inline" action="/sites/{{.ID}}/retry" method="post"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button>Retry</button></form>{{end}}
 {{if .Backups}}<details><summary>Restore a backup</summary>{{range .Backups}}<form action="/sites/{{$site.ID}}/restore" method="post"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="backup_id" value="{{.ID}}"><small>{{formatTime .CreatedAt}} · {{.ID}}</small><label>Type {{$site.Domain}} to confirm<input name="confirm" required></label><p><button class="danger">Restore this backup</button></p></form>{{end}}</details>{{end}}
 <details><summary>Delete permanently</summary><form action="/sites/{{.ID}}/delete" method="post"><input type="hidden" name="csrf" value="{{$.CSRF}}"><label>Type domain to confirm<input name="confirm" required placeholder="{{.Domain}}"></label><p><button class="danger">Delete site and data</button></p></form></details></td></tr>{{end}}</tbody></table>{{end}}</section></main>{{end}}</body></html>`))
+
+var filesPage = template.Must(template.New("files").Funcs(template.FuncMap{"formatTime": func(ts int64) string { return time.Unix(ts, 0).Local().Format("2006-01-02 15:04") }}).Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>File manager · {{.Site.Domain}}</title><style>
+body{font:16px system-ui,sans-serif;background:#f5f7fa;color:#17212b;max-width:1000px;margin:2rem auto;padding:0 1rem}section{background:#fff;border:1px solid #dbe2ea;border-radius:12px;padding:1.25rem;margin:1rem 0}a{color:#165dba}table{width:100%;border-collapse:collapse}td,th{padding:.65rem;border-bottom:1px solid #e5eaf0;text-align:left}input,button{padding:.55rem;border-radius:7px;border:1px solid #aab7c4}button{background:#165dba;color:#fff;border:0;cursor:pointer}.danger{background:#ad2635}.error{background:#ffe9e9;padding:.8rem}.success{background:#e6f6eb;padding:.8rem}form.inline{display:inline}</style></head><body>
+<p><a href="/">← Sites</a></p><h1>wp-content file manager</h1><p><strong>{{.Site.Domain}}</strong></p>
+{{if .Error}}<p class="error">{{.Error}}</p>{{end}}{{if .Message}}<p class="success">{{.Message}}</p>{{end}}
+<section><p>Path: <code>/wp-content{{if .CurrentPath}}/{{.CurrentPath}}{{end}}</code></p>{{if .HasParent}}<p><a href="/sites/{{.Site.ID}}/files?path={{urlquery .Parent}}">↑ Parent directory</a></p>{{end}}
+<table><thead><tr><th>Name</th><th>Size</th><th>Modified</th><th>Actions</th></tr></thead><tbody>{{range .Entries}}<tr><td>{{if eq .Type "directory"}}<a href="/sites/{{$.Site.ID}}/files?path={{urlquery .Path}}">📁 {{.Name}}</a>{{else}}{{if eq .Type "file"}}📄 {{.Name}}{{else}}🔗 {{.Name}}{{end}}{{end}}</td><td>{{if eq .Type "file"}}{{.Size}} bytes{{end}}</td><td>{{formatTime .Modified}}</td><td>{{if eq .Type "file"}}<form class="inline" action="/sites/{{$.Site.ID}}/download" method="post"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="path" value="{{.Path}}"><button>Download</button></form>{{end}}{{if ne .Type "link"}} <form class="inline" action="/sites/{{$.Site.ID}}/file-delete" method="post"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="path" value="{{.Path}}"><button class="danger">Delete</button></form>{{end}}</td></tr>{{else}}<tr><td colspan="4">This directory is empty.</td></tr>{{end}}</tbody></table></section>
+<section><h2>Upload a file</h2><form action="/sites/{{.Site.ID}}/upload" method="post" enctype="multipart/form-data"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="path" value="{{.CurrentPath}}"><input type="file" name="file" required><button>Upload (maximum 10 MB)</button></form></section>
+<section><h2>Create directory</h2><form action="/sites/{{.Site.ID}}/mkdir" method="post"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="path" value="{{.CurrentPath}}"><input name="name" required maxlength="120" placeholder="directory-name"><button>Create</button></form></section>
+<p>Access is restricted to this site's <code>wp-content</code>. Symbolic links cannot be downloaded, modified, or deleted.</p></body></html>`))
+
+type fileEntryView struct {
+	core.FileEntry
+	Path string
+}
+
+type filesView struct {
+	Site        core.Site
+	CSRF        string
+	CurrentPath string
+	Parent      string
+	HasParent   bool
+	Entries     []fileEntryView
+	Error       string
+	Message     string
+}
 
 type view struct {
 	LoggedIn bool
@@ -58,6 +88,56 @@ type app struct {
 	opsMu        sync.Mutex
 	loginMu      sync.Mutex
 	loginFails   map[string][]time.Time
+	flashMu      sync.Mutex
+	flashes      map[string]flash
+}
+
+type flash struct {
+	Message string
+	Error   string
+	Created time.Time
+}
+
+func (a *app) setFlash(w http.ResponseWriter, message, flashError string) error {
+	id, err := core.NewID()
+	if err != nil {
+		return err
+	}
+	a.flashMu.Lock()
+	if a.flashes == nil {
+		a.flashes = make(map[string]flash)
+	}
+	cutoff := time.Now().Add(-5 * time.Minute)
+	for key, item := range a.flashes {
+		if item.Created.Before(cutoff) {
+			delete(a.flashes, key)
+		}
+	}
+	a.flashes[id] = flash{Message: message, Error: flashError, Created: time.Now()}
+	a.flashMu.Unlock()
+	http.SetCookie(w, &http.Cookie{Name: "wph_flash", Value: id, Path: "/", HttpOnly: true, Secure: a.secureCookie, SameSite: http.SameSiteStrictMode, MaxAge: 120})
+	return nil
+}
+
+func (a *app) takeFlash(w http.ResponseWriter, r *http.Request) flash {
+	cookie, err := r.Cookie("wph_flash")
+	if err != nil {
+		return flash{}
+	}
+	a.flashMu.Lock()
+	item := a.flashes[cookie.Value]
+	delete(a.flashes, cookie.Value)
+	a.flashMu.Unlock()
+	http.SetCookie(w, &http.Cookie{Name: "wph_flash", Path: "/", HttpOnly: true, Secure: a.secureCookie, SameSite: http.SameSiteStrictMode, MaxAge: -1})
+	return item
+}
+
+func (a *app) redirectWithFlash(w http.ResponseWriter, r *http.Request, message, flashError string) {
+	if err := a.setFlash(w, message, flashError); err != nil {
+		http.Error(w, "unable to create result message", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (a *app) render(w http.ResponseWriter, r *http.Request, v view) {
@@ -105,7 +185,15 @@ func (a *app) authenticated(r *http.Request) bool {
 
 func (a *app) checkCSRF(r *http.Request) bool {
 	c, err := r.Cookie("wph_session")
-	if err != nil || r.ParseForm() != nil {
+	if err != nil {
+		return false
+	}
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+		err = r.ParseMultipartForm(1 << 20)
+	} else {
+		err = r.ParseForm()
+	}
+	if err != nil {
 		return false
 	}
 	return hmac.Equal([]byte(r.FormValue("csrf")), []byte(a.csrf(c.Value)))
@@ -157,7 +245,7 @@ func (a *app) callWorker(path string, body, result any) error {
 		return fmt.Errorf("worker: %s", strings.TrimSpace(string(message)))
 	}
 	if result != nil {
-		return json.NewDecoder(io.LimitReader(resp.Body, 8192)).Decode(result)
+		return json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(result)
 	}
 	return nil
 }
@@ -168,7 +256,8 @@ func (a *app) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodGet && r.URL.Path == "/" {
-		a.render(w, r, view{LoggedIn: a.authenticated(r)})
+		item := a.takeFlash(w, r)
+		a.render(w, r, view{LoggedIn: a.authenticated(r), Message: item.Message, Error: item.Error})
 		return
 	}
 	if r.Method == http.MethodPost && r.URL.Path == "/login" {
@@ -191,6 +280,17 @@ func (a *app) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !a.authenticated(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
+	}
+	if r.Method == http.MethodGet {
+		if strings.HasPrefix(r.URL.Path, "/sites/") && strings.HasSuffix(r.URL.Path, "/files") {
+			a.showFiles(w, r)
+			return
+		}
+		http.NotFound(w, r)
+		return
+	}
+	if strings.HasSuffix(r.URL.Path, "/upload") {
+		r.Body = http.MaxBytesReader(w, r.Body, 11<<20)
 	}
 	if r.Method != http.MethodPost || !a.checkCSRF(r) {
 		http.Error(w, "forbidden", http.StatusForbidden)
@@ -282,7 +382,7 @@ func (a *app) createSite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	message := "Site created. WordPress username: admin. Password (save now): " + adminPassword
-	a.render(w, r, view{LoggedIn: true, Message: message})
+	a.redirectWithFlash(w, r, message, "")
 }
 
 func (a *app) siteAction(w http.ResponseWriter, r *http.Request) {
@@ -297,6 +397,10 @@ func (a *app) siteAction(w http.ResponseWriter, r *http.Request) {
 	site, ok, err := a.store.Get(id)
 	if err != nil || !ok {
 		http.NotFound(w, r)
+		return
+	}
+	if action == "upload" || action == "download" || action == "mkdir" || action == "file-delete" {
+		a.fileAction(w, r, site, action)
 		return
 	}
 	if action == "delete" && r.FormValue("confirm") != site.Domain {
@@ -328,7 +432,7 @@ func (a *app) siteAction(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			site.Status = core.StatusRunning
 			_ = a.store.Put(site)
-			a.render(w, r, view{LoggedIn: true, Message: "Site creation retried. WordPress username: admin. New password (save now): " + adminPassword})
+			a.redirectWithFlash(w, r, "Site creation retried. WordPress username: admin. New password (save now): "+adminPassword, "")
 			return
 		}
 	} else {
@@ -347,7 +451,7 @@ func (a *app) siteAction(w http.ResponseWriter, r *http.Request) {
 				site.Status = core.StatusRunning
 				_ = a.store.Put(site)
 			}
-			a.render(w, r, view{LoggedIn: true, Message: "Site action completed"})
+			a.redirectWithFlash(w, r, "Site action completed", "")
 			return
 		}
 	}
@@ -376,7 +480,7 @@ func (a *app) backupSite(w http.ResponseWriter, r *http.Request, site core.Site)
 		http.Error(w, "backup completed but metadata could not be saved", http.StatusInternalServerError)
 		return
 	}
-	a.render(w, r, view{LoggedIn: true, Message: "Backup completed and verified"})
+	a.redirectWithFlash(w, r, "Backup completed and verified", "")
 }
 
 func (a *app) restoreSite(w http.ResponseWriter, r *http.Request, site core.Site) {
@@ -419,7 +523,171 @@ func (a *app) restoreSite(w http.ResponseWriter, r *http.Request, site core.Site
 		a.render(w, r, view{LoggedIn: true, Error: "Restore failed. A safety backup was retained: " + safetyID + ". " + err.Error()})
 		return
 	}
-	a.render(w, r, view{LoggedIn: true, Message: "Backup restored. Safety backup retained: " + safetyID})
+	a.redirectWithFlash(w, r, "Backup restored. Safety backup retained: "+safetyID, "")
+}
+
+func siteIDFromFilesPath(requestPath string) (string, bool) {
+	parts := strings.Split(strings.TrimPrefix(requestPath, "/sites/"), "/")
+	if len(parts) != 2 || parts[1] != "files" || !core.ValidID(parts[0]) {
+		return "", false
+	}
+	return parts[0], true
+}
+
+func (a *app) showFiles(w http.ResponseWriter, r *http.Request) {
+	id, ok := siteIDFromFilesPath(r.URL.Path)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	site, found, err := a.store.Get(id)
+	if err != nil || !found || site.Status != core.StatusRunning {
+		http.Error(w, "running site not found", http.StatusNotFound)
+		return
+	}
+	current := r.URL.Query().Get("path")
+	if !core.ValidRelativePath(current, true) {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+	a.renderFiles(w, r, site, current, "", "")
+}
+
+func (a *app) renderFiles(w http.ResponseWriter, r *http.Request, site core.Site, current, message, viewError string) {
+	var entries []core.FileEntry
+	if err := a.callWorker("/files/list", core.FileRequest{SiteID: site.ID, Path: current}, &entries); err != nil {
+		http.Error(w, "unable to list files: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	items := make([]fileEntryView, 0, len(entries))
+	for _, entry := range entries {
+		candidate := entry.Name
+		if current != "" {
+			candidate = current + "/" + entry.Name
+		}
+		if !core.ValidRelativePath(candidate, false) {
+			continue
+		}
+		items = append(items, fileEntryView{FileEntry: entry, Path: candidate})
+	}
+	parent, hasParent := "", current != ""
+	if hasParent {
+		parent = path.Dir(current)
+		if parent == "." {
+			parent = ""
+		}
+	}
+	csrf := ""
+	if cookie, err := r.Cookie("wph_session"); err == nil {
+		csrf = a.csrf(cookie.Value)
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
+	if err := filesPage.Execute(w, filesView{Site: site, CSRF: csrf, CurrentPath: current, Parent: parent, HasParent: hasParent, Entries: items, Error: viewError, Message: message}); err != nil {
+		log.Printf("file page render failed: %v", err)
+	}
+}
+
+func joinRelative(directory, name string) (string, error) {
+	if !core.ValidRelativePath(directory, true) || path.Base(name) != name || !core.ValidRelativePath(name, false) {
+		return "", errors.New("invalid file name")
+	}
+	if directory == "" {
+		return name, nil
+	}
+	joined := directory + "/" + name
+	if !core.ValidRelativePath(joined, false) {
+		return "", errors.New("invalid file path")
+	}
+	return joined, nil
+}
+
+func (a *app) redirectFiles(w http.ResponseWriter, r *http.Request, siteID, directory string) {
+	target := "/sites/" + siteID + "/files"
+	if directory != "" {
+		target += "?" + url.Values{"path": {directory}}.Encode()
+	}
+	http.Redirect(w, r, target, http.StatusSeeOther)
+}
+
+func (a *app) fileAction(w http.ResponseWriter, r *http.Request, site core.Site, action string) {
+	if site.Status != core.StatusRunning {
+		http.Error(w, "site must be running", http.StatusConflict)
+		return
+	}
+	current := r.FormValue("path")
+	if action == "upload" {
+		file, header, err := r.FormFile("file")
+		if err != nil {
+			http.Error(w, "invalid upload", http.StatusBadRequest)
+			return
+		}
+		defer file.Close()
+		if r.MultipartForm != nil {
+			defer r.MultipartForm.RemoveAll()
+		}
+		target, err := joinRelative(current, header.Filename)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		content, err := io.ReadAll(io.LimitReader(file, (10<<20)+1))
+		if err != nil || len(content) > 10<<20 {
+			http.Error(w, "file exceeds 10 MB", http.StatusRequestEntityTooLarge)
+			return
+		}
+		if err := a.callWorker("/files/write", core.FileRequest{SiteID: site.ID, Path: target, Content: content}, nil); err != nil {
+			a.renderFiles(w, r, site, current, "", "Upload failed: "+err.Error())
+			return
+		}
+		a.redirectFiles(w, r, site.ID, current)
+		return
+	}
+	if action == "mkdir" {
+		target, err := joinRelative(current, strings.TrimSpace(r.FormValue("name")))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := a.callWorker("/files/mkdir", core.FileRequest{SiteID: site.ID, Path: target}, nil); err != nil {
+			a.renderFiles(w, r, site, current, "", "Create directory failed: "+err.Error())
+			return
+		}
+		a.redirectFiles(w, r, site.ID, current)
+		return
+	}
+	target := r.FormValue("path")
+	if !core.ValidRelativePath(target, false) {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+	directory := path.Dir(target)
+	if directory == "." {
+		directory = ""
+	}
+	if action == "file-delete" {
+		if err := a.callWorker("/files/delete", core.FileRequest{SiteID: site.ID, Path: target}, nil); err != nil {
+			a.renderFiles(w, r, site, directory, "", "Delete failed: "+err.Error())
+			return
+		}
+		a.redirectFiles(w, r, site.ID, directory)
+		return
+	}
+	if action == "download" {
+		var content core.FileContent
+		if err := a.callWorker("/files/read", core.FileRequest{SiteID: site.ID, Path: target}, &content); err != nil {
+			a.renderFiles(w, r, site, directory, "", "Download failed: "+err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": content.Name}))
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		_, _ = w.Write(content.Content)
+		return
+	}
+	http.NotFound(w, r)
 }
 
 func main() {
@@ -442,7 +710,7 @@ func main() {
 		log.Fatal("PANEL_ADMIN_HASH, PANEL_SESSION_KEY and WORKER_TOKEN are required")
 	}
 	panelDomain := os.Getenv("PANEL_DOMAIN")
-	app := &app{store: store.New("/data/sites.json"), workerURL: "http://worker:8081", workerToken: token, adminHash: []byte(hash), sessionKey: []byte(key), secureCookie: !strings.HasPrefix(panelDomain, "http://localhost") && !strings.HasPrefix(panelDomain, "http://127.0.0.1"), client: &http.Client{Timeout: 20*time.Minute + 10*time.Second}, loginFails: make(map[string][]time.Time)}
+	app := &app{store: store.New("/data/sites.json"), workerURL: "http://worker:8081", workerToken: token, adminHash: []byte(hash), sessionKey: []byte(key), secureCookie: !strings.HasPrefix(panelDomain, "http://localhost") && !strings.HasPrefix(panelDomain, "http://127.0.0.1"), client: &http.Client{Timeout: 20*time.Minute + 10*time.Second}, loginFails: make(map[string][]time.Time), flashes: make(map[string]flash)}
 	sites, err := app.store.List()
 	if err != nil {
 		log.Fatal(err)

@@ -41,13 +41,15 @@ services:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - routes:/etc/caddy/sites:ro
       - ${WPH_DATA_DIR:?}/caddy:/data
-    networks: [web]
+    networks: [web, sites_proxy]
     depends_on: [panel]
 
 networks:
   control:
     internal: true
   web:
+  sites_proxy:
+    name: wphost-sites-proxy
 
 volumes:
   routes:

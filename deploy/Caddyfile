@@ -1,6 +1,8 @@
 {$PANEL_DOMAIN} {
   encode zstd gzip
-  reverse_proxy panel:8080
+  reverse_proxy panel:8080 {
+    flush_interval -1
+  }
 }
 
 import /etc/caddy/sites/*.caddy

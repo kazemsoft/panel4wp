@@ -16,7 +16,7 @@ Exit checks: a clean install creates a working local and public site; start/stop
 ## Milestone 1 — usable single administrator MVP
 
 1. **Backups and restore:** on-demand, checksum-verified, in-place backup and restore is complete. Remaining: schedules, retention, off-host copies, encryption, and restore to a new site ID.
-2. **File access:** browser file manager constrained to `wp-content`; optional per-site SFTP using public keys. Never expose the WordPress or database container directly.
+2. **File access:** browser file manager constrained to `wp-content` is complete for files up to 10 MB. Remaining: per-site SFTP using public keys, archive extraction, bulk operations, and an audit log.
 3. **Database tools:** an on-demand Adminer or phpMyAdmin container behind the authenticated panel, with a short lived route and credentials. It stays stopped when unused.
 4. **Resource controls:** creation-time CPU, memory, and process limits are complete. Remaining: storage quotas, custom plans, edits after creation, and host capacity validation.
 5. **Site operations:** domain change, PHP settings, WordPress/plugin/theme updates, maintenance mode, logs, and health state reconciliation after host restarts.
