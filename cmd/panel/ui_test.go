@@ -44,6 +44,35 @@ func TestIndependentPagesPreserveActions(t *testing.T) {
 	}
 }
 
+func TestSidebarHighlightsCurrentPageAndStartsContentAtTop(t *testing.T) {
+	tests := map[string]string{
+		"dashboard": `class="nav-link active" href="/"`,
+		"new":       `class="nav-link active" href="/"`,
+		"site":      `class="nav-link active" href="/"`,
+		"settings":  `class="nav-link active" href="/settings"`,
+		"activity":  `class="nav-link active" href="/activity"`,
+		"roadmap":   `class="nav-link roadmap-nav active" href="/roadmap"`,
+	}
+	for pageName, activeLink := range tests {
+		t.Run(pageName, func(t *testing.T) {
+			var output bytes.Buffer
+			if err := page.Execute(&output, view{LoggedIn: true, Page: pageName}); err != nil {
+				t.Fatal(err)
+			}
+			html := output.String()
+			if !strings.Contains(html, activeLink) {
+				t.Fatalf("missing active navigation link %q", activeLink)
+			}
+			if !strings.Contains(html, "margin:0 auto;align-self:start") {
+				t.Fatal("workspace is not aligned to the top")
+			}
+			if !strings.Contains(html, "Star panel4wp on GitHub") || !strings.Contains(html, "Support its development by giving it a star") {
+				t.Fatal("GitHub support callout is missing")
+			}
+		})
+	}
+}
+
 func TestFileManagerConfirmsDeletionAndPreservesOperations(t *testing.T) {
 	var output bytes.Buffer
 	v := filesView{Site: core.Site{ID: "abc123", Domain: "demo.localhost"}, CSRF: "csrf-test", Entries: []fileEntryView{{FileEntry: core.FileEntry{Name: "test.txt", Type: "file"}, Path: "test.txt"}}}
