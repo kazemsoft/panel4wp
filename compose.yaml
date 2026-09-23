@@ -25,6 +25,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${WPH_DATA_DIR:?}/sites:${WPH_DATA_DIR:?}/sites
+      - ${WPH_DATA_DIR:?}/backups:${WPH_DATA_DIR:?}/backups
       - routes:/routes
     networks: [control]
   caddy:

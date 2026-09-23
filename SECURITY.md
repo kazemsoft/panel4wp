@@ -13,3 +13,5 @@ The `worker` container controls Docker through `/var/run/docker.sock` and is the
 Each managed site has a distinct WordPress container, MariaDB container, volumes, private database network, credentials, and Caddy route. This reduces accidental cross-site access, but containers sharing a Docker host are not a strong boundary against a hostile customer. Multi customer operation requires further isolation and a security review.
 
 Secrets are generated locally, stored beneath a mode `0700` data directory, excluded from Git and Docker build contexts, and mounted into site containers as files. Anyone with root or Docker access on the host can read them.
+
+Backups are stored locally under the same protected data directory and contain site content plus a database dump. Checksums detect accidental corruption; they do not protect against an attacker who can rewrite both the files and manifest. Backups are not encrypted. Protect and copy them as sensitive production data.

@@ -66,7 +66,7 @@ func TestLoginCreateAndRejectMissingCSRF(t *testing.T) {
 		t.Fatalf("create failed: %d, %s, worker calls %d", createResp.StatusCode, body, workerCalls)
 	}
 	sites, err := a.store.List()
-	if err != nil || len(sites) != 1 || sites[0].Domain != "example.com" {
+	if err != nil || len(sites) != 1 || sites[0].Domain != "example.com" || sites[0].MemoryMB != 768 || sites[0].CPUs != 1 {
 		t.Fatalf("site missing: %#v, %v", sites, err)
 	}
 	values.Del("csrf")

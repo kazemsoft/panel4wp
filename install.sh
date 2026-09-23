@@ -22,8 +22,8 @@ case "$panel_domain" in
   http://localhost|http://127.0.0.1|https://localhost|https://127.0.0.1) ;;
   http://*|https://*|*://*|*[!a-zA-Z0-9.-]*|'') echo 'Invalid panel domain. Use a hostname such as panel.example.com or http://localhost.' >&2; exit 1 ;;
 esac
-mkdir -p data/panel data/sites data/caddy
-chmod 700 data data/panel data/sites data/caddy
+mkdir -p data/panel data/sites data/backups data/caddy
+chmod 700 data data/panel data/sites data/backups data/caddy
 
 random_hex() { od -An -N32 -tx1 /dev/urandom | tr -d ' \n'; }
 admin_password=$(random_hex)

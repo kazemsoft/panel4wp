@@ -25,9 +25,17 @@ type Site struct {
 	Domain     string    `json:"domain"`
 	Title      string    `json:"title"`
 	AdminEmail string    `json:"admin_email"`
+	MemoryMB   int       `json:"memory_mb,omitempty"`
+	CPUs       float64   `json:"cpus,omitempty"`
 	Status     Status    `json:"status"`
 	Error      string    `json:"error,omitempty"`
 	CreatedAt  time.Time `json:"created_at"`
+	Backups    []Backup  `json:"backups,omitempty"`
+}
+
+type Backup struct {
+	ID        string    `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type CreateRequest struct {
@@ -36,8 +44,20 @@ type CreateRequest struct {
 	AdminPassword string `json:"admin_password"`
 }
 
+type BackupRequest struct {
+	Site     Site   `json:"site"`
+	BackupID string `json:"backup_id"`
+}
+
+type RestoreRequest struct {
+	Site           Site   `json:"site"`
+	BackupID       string `json:"backup_id"`
+	SafetyBackupID string `json:"safety_backup_id"`
+}
+
 var domainLabel = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
 var siteID = regexp.MustCompile(`^[0-9a-f]{16}$`)
+var backupID = regexp.MustCompile(`^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$`)
 
 func NewID() (string, error) {
 	var b [8]byte
@@ -56,6 +76,16 @@ func RandomPassword() (string, error) {
 }
 
 func ValidID(id string) bool { return siteID.MatchString(id) }
+
+func ValidBackupID(id string) bool { return backupID.MatchString(id) }
+
+func NewBackupID(now time.Time) (string, error) {
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return now.UTC().Format("20060102T150405Z") + "-" + hex.EncodeToString(b[:]), nil
+}
 
 func NormalizeDomain(raw string) (string, error) {
 	domain := strings.ToLower(strings.TrimSpace(raw))
@@ -93,5 +123,22 @@ func ValidateSite(s Site) error {
 	if strings.TrimSpace(s.AdminEmail) == "" || len(s.AdminEmail) > 254 || strings.ContainsAny(s.AdminEmail, " \n\r\t") || !strings.Contains(s.AdminEmail, "@") {
 		return fmt.Errorf("invalid admin email")
 	}
+	if s.MemoryMB != 0 && (s.MemoryMB < 256 || s.MemoryMB > 8192) {
+		return errors.New("memory must be between 256 and 8192 MB per container")
+	}
+	if s.CPUs != 0 && (s.CPUs < 0.25 || s.CPUs > 8) {
+		return errors.New("CPU limit must be between 0.25 and 8 per container")
+	}
 	return nil
+}
+
+func ResourceLimits(s Site) (int, float64) {
+	memory, cpus := s.MemoryMB, s.CPUs
+	if memory == 0 {
+		memory = 512
+	}
+	if cpus == 0 {
+		cpus = 1
+	}
+	return memory, cpus
 }
