@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -269,6 +270,28 @@ func TestVerifyBackupRejectsTampering(t *testing.T) {
 	}
 	if _, err := w.verifyBackup("../escape", backupID); err == nil {
 		t.Fatal("path traversal accepted")
+	}
+}
+
+func TestDeleteBackupIsScopedAndValidated(t *testing.T) {
+	base := t.TempDir()
+	w := &worker{backupsRoot: filepath.Join(base, "backups")}
+	siteID, backupID := "0123456789abcdef", "20260923T010203Z-aabbccdd"
+	dir := w.backupDir(siteID, backupID)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.deleteBackup(core.DeleteBackupRequest{SiteID: siteID, BackupID: backupID}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("backup remains: %v", err)
+	}
+	if err := w.deleteBackup(core.DeleteBackupRequest{SiteID: "../escape", BackupID: backupID}); err == nil {
+		t.Fatal("unsafe site ID accepted")
 	}
 }
 

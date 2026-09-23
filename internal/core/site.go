@@ -51,6 +51,11 @@ type BackupRequest struct {
 	BackupID string `json:"backup_id"`
 }
 
+type DeleteBackupRequest struct {
+	SiteID   string `json:"site_id"`
+	BackupID string `json:"backup_id"`
+}
+
 type RestoreRequest struct {
 	Site           Site   `json:"site"`
 	BackupID       string `json:"backup_id"`

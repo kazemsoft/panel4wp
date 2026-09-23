@@ -3,29 +3,44 @@ package main
 import (
 	"bytes"
 	"github.com/kazemsoft/panel4wp/internal/core"
+	"github.com/kazemsoft/panel4wp/internal/store"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
-func TestDashboardPreservesSiteActionsAndEscapesContent(t *testing.T) {
-	var output bytes.Buffer
+func TestIndependentPagesPreserveActions(t *testing.T) {
 	site := core.Site{ID: "abc123", Domain: "demo.localhost", Title: `<script>alert(1)</script>`, Status: core.StatusRunning, Backups: []core.Backup{{ID: "backup123"}}}
-	if err := page.Execute(&output, view{LoggedIn: true, CSRF: "csrf-test", Sites: []core.Site{site}}); err != nil {
-		t.Fatal(err)
-	}
-	html := output.String()
-	for _, target := range []string{"stop", "backup", "update", "database-start", "restore", "delete"} {
-		if !strings.Contains(html, `action="/sites/abc123/`+target+`"`) {
-			t.Errorf("missing action %s", target)
-		}
-	}
-	for _, required := range []string{`href="/sites/abc123/files"`, `name="confirm"`, `value="csrf-test"`, `name="backup_id"`, `Coming soon`, `id="settings"`} {
-		if !strings.Contains(html, required) {
-			t.Errorf("missing UI element %s", required)
-		}
-	}
-	if strings.Contains(html, site.Title) {
-		t.Fatal("unescaped site title")
+	for pageName, actions := range map[string][]string{"dashboard": {}, "site": {"stop", "delete"}, "backups": {"backup", "restore", "backup-delete"}, "updates": {"update"}, "database": {"database-start"}} {
+		t.Run(pageName, func(t *testing.T) {
+			var output bytes.Buffer
+			if err := page.Execute(&output, view{LoggedIn: true, Page: pageName, CSRF: "csrf-test", Sites: []core.Site{site}}); err != nil {
+				t.Fatal(err)
+			}
+			html := output.String()
+			for _, action := range actions {
+				if !strings.Contains(html, `action="/sites/abc123/`+action+`"`) {
+					t.Errorf("missing action %s", action)
+				}
+			}
+			if strings.Contains(html, site.Title) {
+				t.Fatal("unescaped title")
+			}
+			if pageName == "dashboard" {
+				for _, forbidden := range []string{`action="/sites/`, `id="settings"`, `id="activity"`, `id="create-site"`} {
+					if strings.Contains(html, forbidden) {
+						t.Errorf("dashboard contains %s", forbidden)
+					}
+				}
+				if !strings.Contains(html, `href="/sites/abc123"`) {
+					t.Error("missing manage link")
+				}
+			}
+		})
 	}
 }
 
@@ -39,5 +54,30 @@ func TestFileManagerConfirmsDeletionAndPreservesOperations(t *testing.T) {
 		if !strings.Contains(output.String(), required) {
 			t.Errorf("missing UI element %s", required)
 		}
+	}
+}
+
+func TestWorkspaceRoutes(t *testing.T) {
+	a := &app{store: store.New(filepath.Join(t.TempDir(), "sites.json")), sessionKey: []byte(strings.Repeat("s", 64))}
+	if err := a.store.Put(core.Site{ID: "abc123", Domain: "demo.localhost", Title: "Demo", Status: core.StatusRunning}); err != nil {
+		t.Fatal(err)
+	}
+	payload := strconv.FormatInt(time.Now().Add(time.Hour).Unix(), 10)
+	for _, route := range []string{"/sites/new", "/settings", "/activity", "/sites/abc123", "/sites/abc123/backups", "/sites/abc123/updates", "/sites/abc123/database"} {
+		t.Run(route, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, route, nil)
+			w := httptest.NewRecorder()
+			a.ServeHTTP(w, r)
+			if w.Code != http.StatusUnauthorized {
+				t.Fatalf("unauthenticated route: %d", w.Code)
+			}
+			r = httptest.NewRequest(http.MethodGet, route, nil)
+			r.AddCookie(&http.Cookie{Name: "wph_session", Value: payload + "." + a.sign(payload)})
+			w = httptest.NewRecorder()
+			a.ServeHTTP(w, r)
+			if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "</html>") {
+				t.Fatalf("route failed: %d", w.Code)
+			}
+		})
 	}
 }

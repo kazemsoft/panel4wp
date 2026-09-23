@@ -636,6 +636,21 @@ func (w *worker) verifyBackup(siteID, backupID string) (string, error) {
 	return dir, nil
 }
 
+func (w *worker) deleteBackup(req core.DeleteBackupRequest) error {
+	if !core.ValidID(req.SiteID) || !core.ValidBackupID(req.BackupID) || w.backupsRoot == "" {
+		return errors.New("invalid backup delete request")
+	}
+	dir := w.backupDir(req.SiteID, req.BackupID)
+	info, err := os.Stat(dir)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return errors.New("backup is not a directory")
+	}
+	return os.RemoveAll(dir)
+}
+
 func (w *worker) validateFileRequest(req core.FileRequest, allowEmpty bool) error {
 	if !core.ValidID(req.SiteID) || !core.ValidRelativePath(req.Path, allowEmpty) {
 		return errors.New("invalid file path")
@@ -932,6 +947,13 @@ func (w *worker) ServeHTTP(resp http.ResponseWriter, req *http.Request) {
 			return
 		}
 		err = w.restore(ctx, body)
+	} else if req.URL.Path == "/backup/delete" {
+		var body core.DeleteBackupRequest
+		if decodeErr := json.NewDecoder(req.Body).Decode(&body); decodeErr != nil {
+			http.Error(resp, "invalid request", http.StatusBadRequest)
+			return
+		}
+		err = w.deleteBackup(body)
 	} else if req.URL.Path == "/files/list" || req.URL.Path == "/files/read" || req.URL.Path == "/files/write" || req.URL.Path == "/files/delete" || req.URL.Path == "/files/mkdir" {
 		var body core.FileRequest
 		if decodeErr := json.NewDecoder(req.Body).Decode(&body); decodeErr != nil {
