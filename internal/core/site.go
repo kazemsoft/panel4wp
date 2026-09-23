@@ -56,6 +56,10 @@ type RestoreRequest struct {
 	SafetyBackupID string `json:"safety_backup_id"`
 }
 
+type UpdateRequest struct {
+	Site Site `json:"site"`
+}
+
 type FileRequest struct {
 	SiteID  string `json:"site_id"`
 	Path    string `json:"path"`

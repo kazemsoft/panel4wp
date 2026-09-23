@@ -38,6 +38,7 @@ body{font:16px system-ui,sans-serif;background:#f5f7fa;color:#17212b;max-width:1
 <section><h2>Sites</h2>{{if not .Sites}}<p class="muted">No sites yet.</p>{{else}}<p><a href="/?stats=1">Refresh live resource usage</a></p>{{if .StatsError}}<p class="error">{{.StatsError}}</p>{{end}}<table><thead><tr><th>Site</th><th>Status</th><th>Actions</th></tr></thead><tbody>{{range .Sites}}{{$site := .}}{{$stats := index $.Stats .ID}}<tr><td><strong>{{.Title}}</strong><br><a href="{{if hasSuffix .Domain ".localhost"}}http{{else}}https{{end}}://{{.Domain}}" target="_blank" rel="noopener">{{.Domain}}</a><br><small>{{.ID}} · {{.MemoryMB}} MB · {{.CPUs}} CPU</small>{{if $stats}}<details><summary>Live resource usage</summary>{{if $stats.WordPress}}<p><small><strong>WordPress</strong> · CPU {{$stats.WordPress.CPU}} · Memory {{$stats.WordPress.Memory}} ({{$stats.WordPress.MemoryPC}}) · Network {{$stats.WordPress.NetIO}} · Disk I/O {{$stats.WordPress.BlockIO}} · PIDs {{$stats.WordPress.PIDs}}</small></p>{{end}}{{if $stats.Database}}<p><small><strong>Database</strong> · CPU {{$stats.Database.CPU}} · Memory {{$stats.Database.Memory}} ({{$stats.Database.MemoryPC}}) · Network {{$stats.Database.NetIO}} · Disk I/O {{$stats.Database.BlockIO}} · PIDs {{$stats.Database.PIDs}}</small></p>{{end}}</details>{{end}}{{if .Error}}<p class="error">{{.Error}}</p>{{end}}</td><td><span class="badge">{{.Status}}</span></td><td>
 {{if eq .Status "running"}}<form class="inline" action="/sites/{{.ID}}/stop" method="post"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="secondary">Stop</button></form>{{end}}
 {{if eq .Status "running"}}<form class="inline" action="/sites/{{.ID}}/backup" method="post"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button>Back up now</button></form>{{end}}
+{{if eq .Status "running"}}<form class="inline" action="/sites/{{.ID}}/update" method="post"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button>Back up and update WordPress</button></form>{{end}}
 {{if eq .Status "running"}}<p><a href="/sites/{{.ID}}/files">Manage wp-content files</a></p>{{end}}
 {{if eq .Status "running"}}<form class="inline" action="/sites/{{.ID}}/database-start" method="post"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button>Open database manager</button></form><small> Available for 15 minutes</small>{{end}}
 {{if eq .Status "stopped"}}<form class="inline" action="/sites/{{.ID}}/start" method="post"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button>Start</button></form>{{end}}
@@ -498,6 +499,10 @@ func (a *app) siteAction(w http.ResponseWriter, r *http.Request) {
 		a.backupSite(w, r, site)
 		return
 	}
+	if action == "update" {
+		a.updateSite(w, r, site)
+		return
+	}
 	if action == "restore" {
 		a.restoreSite(w, r, site)
 		return
@@ -568,6 +573,33 @@ func (a *app) backupSite(w http.ResponseWriter, r *http.Request, site core.Site)
 		return
 	}
 	a.redirectWithFlash(w, r, "Backup completed and verified", "")
+}
+
+func (a *app) updateSite(w http.ResponseWriter, r *http.Request, site core.Site) {
+	if site.Status != core.StatusRunning {
+		http.Error(w, "site must be running", http.StatusConflict)
+		return
+	}
+	backupID, err := core.NewBackupID(time.Now())
+	if err != nil {
+		http.Error(w, "unable to generate safety backup ID", http.StatusInternalServerError)
+		return
+	}
+	var safety core.Backup
+	if err := a.callWorker("/backup", core.BackupRequest{Site: site, BackupID: backupID}, &safety); err != nil {
+		a.render(w, r, view{LoggedIn: true, Error: "Update stopped because the safety backup failed: " + err.Error()})
+		return
+	}
+	site.Backups = append(site.Backups, safety)
+	if err := a.store.Put(site); err != nil {
+		a.render(w, r, view{LoggedIn: true, Error: "Update stopped because safety backup metadata could not be saved"})
+		return
+	}
+	if err := a.callWorker("/update", core.UpdateRequest{Site: site}, nil); err != nil {
+		a.render(w, r, view{LoggedIn: true, Error: "WordPress update failed. Safety backup retained: " + backupID + ". " + err.Error()})
+		return
+	}
+	a.redirectWithFlash(w, r, "WordPress core, database, plugins, and themes updated. Safety backup retained: "+backupID, "")
 }
 
 func (a *app) restoreSite(w http.ResponseWriter, r *http.Request, site core.Site) {

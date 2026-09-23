@@ -2,7 +2,7 @@
 
 An early, self hosted, open source WordPress server panel. A single server administrator can create, start, stop, and remove independent WordPress sites from a browser. Each site gets its own WordPress and MariaDB containers, Docker volumes, credentials, and domain route. Caddy handles HTTPS for public domains.
 
-**Status: experimental MVP.** Do not use it for paying customers or irreplaceable data yet. SFTP, automated alerting, upgrades, storage quotas, off-host backups, and customer accounts are planned but not implemented. The current worker has access to the Docker socket and must be treated as a privileged part of the host.
+**Status: experimental MVP.** Do not use it for paying customers or irreplaceable data yet. SFTP, automated alerting, container image upgrades, storage quotas, off-host backups, and customer accounts are planned but not implemented. The current worker has access to the Docker socket and must be treated as a privileged part of the host.
 
 ## Requirements
 
@@ -31,6 +31,8 @@ Log in with the password printed by the installer. Create a site using its domai
 The panel supports Start, Stop, Retry after failed creation, verified Backup, in-place Restore, and permanent Delete. A backup contains a consistent MariaDB dump, the complete WordPress volume, a manifest, and SHA-256 checksums. Restore first creates and retains a safety backup, then verifies the selected backup before replacing data. Local backups live under `data/backups/<site-id>`.
 
 The Sites page can request a live resource snapshot for every running site. It displays CPU, memory, network I/O, block I/O, and process counts separately for WordPress and MariaDB. Metrics are loaded only when requested so routine panel navigation does not run Docker stats.
+
+The **Back up and update WordPress** action first creates and records a verified safety backup. It then updates WordPress core, runs database migrations, and updates all plugins and themes through the site's isolated WP-CLI service. The safety backup remains available for an in-place restore if an extension update causes a regression.
 
 Each running site has a browser file manager restricted to its `wp-content` directory. It can browse directories, upload and download files up to 10 MB, create directories, delete files, and remove empty directories. It refuses unsafe relative paths and does not allow operations on symbolic links.
 

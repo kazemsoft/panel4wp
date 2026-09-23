@@ -126,6 +126,8 @@ secrets:
 
 const wpInstallScript = `i=0; while [ ! -f wp-includes/version.php ] && [ "$i" -lt 120 ]; do i=$((i+1)); sleep 1; done; if [ ! -f wp-includes/version.php ]; then echo "WordPress files were not ready after 120 seconds" >&2; exit 1; fi; if wp core is-installed >/dev/null 2>&1; then wp user update admin --user_pass="$(cat /run/secrets/admin_password)" --user_email="$(cat /run/secrets/admin_email)"; else wp core install --url="$(cat /run/secrets/site_url)" --title="$(cat /run/secrets/site_title)" --admin_user=admin --admin_password="$(cat /run/secrets/admin_password)" --admin_email="$(cat /run/secrets/admin_email)" --skip-email; fi`
 
+const wpUpdateScript = `set -eu; wp core update; wp core update-db; wp plugin update --all; wp theme update --all`
+
 type runner interface {
 	Run(context.Context, ...string) error
 	Output(context.Context, ...string) ([]byte, error)
@@ -376,6 +378,16 @@ func (w *worker) stats(ctx context.Context, req core.StatsRequest) (map[string]c
 	return result, nil
 }
 
+func (w *worker) updateSite(ctx context.Context, req core.UpdateRequest) error {
+	if err := core.ValidateSite(req.Site); err != nil {
+		return err
+	}
+	if _, err := os.Stat(filepath.Join(w.siteDir(req.Site.ID), "compose.yaml")); err != nil {
+		return err
+	}
+	return w.docker.Run(ctx, w.composeArgs(req.Site.ID, "run", "--rm", "--no-deps", "cli", "sh", "-c", wpUpdateScript)...)
+}
+
 func (w *worker) migrateLegacyNetworks(ctx context.Context) error {
 	entries, err := os.ReadDir(w.root)
 	if errors.Is(err, os.ErrNotExist) {
@@ -454,7 +466,7 @@ func (w *worker) backup(ctx context.Context, req core.BackupRequest) (core.Backu
 	defer os.RemoveAll(tmp)
 	dbContainer := "wph-db-" + req.Site.ID
 	const dumpPath = "/tmp/wph-backup.sql"
-	dumpCommand := `MARIADB_PWD="$(cat /run/secrets/db_root_password)" mariadb-dump --single-transaction --quick --lock-tables=false -u root wordpress > ` + dumpPath
+	dumpCommand := `cnf=/tmp/wph-client.cnf; trap 'rm -f "$cnf"' 0; umask 077; printf '[client]\npassword=%s\n' "$(cat /run/secrets/db_root_password)" > "$cnf"; mariadb-dump --defaults-extra-file="$cnf" --single-transaction --quick --lock-tables=false -u root wordpress > ` + dumpPath
 	if err := w.docker.Run(ctx, "exec", dbContainer, "sh", "-c", dumpCommand); err != nil {
 		return core.Backup{}, err
 	}
@@ -612,7 +624,7 @@ func (w *worker) restore(ctx context.Context, req core.RestoreRequest) error {
 		return err
 	}
 	defer w.docker.Run(context.Background(), "exec", dbContainer, "rm", "-f", restorePath)
-	restoreDB := `export MARIADB_PWD="$(cat /run/secrets/db_root_password)"; mariadb -u root -e 'DROP DATABASE IF EXISTS wordpress; CREATE DATABASE wordpress CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;' && mariadb -u root wordpress < ` + restorePath
+	restoreDB := `cnf=/tmp/wph-client.cnf; trap 'rm -f "$cnf"' 0; umask 077; printf '[client]\npassword=%s\n' "$(cat /run/secrets/db_root_password)" > "$cnf"; mariadb --defaults-extra-file="$cnf" -u root -e 'DROP DATABASE IF EXISTS wordpress; CREATE DATABASE wordpress CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;' && mariadb --defaults-extra-file="$cnf" -u root wordpress < ` + restorePath
 	if err := w.docker.Run(ctx, "exec", dbContainer, "sh", "-c", restoreDB); err != nil {
 		return err
 	}
@@ -783,6 +795,13 @@ func (w *worker) ServeHTTP(resp http.ResponseWriter, req *http.Request) {
 			return
 		}
 		result, err = w.stats(ctx, body)
+	} else if req.URL.Path == "/update" {
+		var body core.UpdateRequest
+		if decodeErr := json.NewDecoder(req.Body).Decode(&body); decodeErr != nil {
+			http.Error(resp, "invalid request", http.StatusBadRequest)
+			return
+		}
+		err = w.updateSite(ctx, body)
 	} else if req.URL.Path == "/restore" {
 		var body core.RestoreRequest
 		if decodeErr := json.NewDecoder(req.Body).Decode(&body); decodeErr != nil {

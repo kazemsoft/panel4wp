@@ -125,6 +125,26 @@ func TestStatsParsesOnlyRequestedSiteContainers(t *testing.T) {
 	}
 }
 
+func TestUpdateSiteUsesIsolatedCLI(t *testing.T) {
+	base := t.TempDir()
+	f := &fakeDocker{}
+	w := &worker{root: filepath.Join(base, "sites"), docker: f}
+	site := core.Site{ID: "0123456789abcdef", Domain: "update.localhost", Title: "Update", AdminEmail: "admin@example.com"}
+	if err := os.MkdirAll(w.siteDir(site.ID), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(w.siteDir(site.ID), "compose.yaml"), []byte("services: {}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.updateSite(context.Background(), core.UpdateRequest{Site: site}); err != nil {
+		t.Fatal(err)
+	}
+	call := strings.Join(f.calls[0], " ")
+	if !strings.Contains(call, "run --rm --no-deps cli sh -c") || !strings.Contains(call, "wp core update-db") || !strings.Contains(call, "wp plugin update --all") || !strings.Contains(call, "wp theme update --all") {
+		t.Fatalf("unexpected update command: %s", call)
+	}
+}
+
 func TestCreateRetryKeepsDatabasePasswordAndRotatesAdminPassword(t *testing.T) {
 	base := t.TempDir()
 	w := &worker{root: filepath.Join(base, "sites"), routes: filepath.Join(base, "routes"), docker: &fakeDocker{}}
