@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/example/wp-host-panel/internal/core"
+	"github.com/kazemsoft/panel4wp/internal/core"
 )
 
 const composeTemplate = `services:

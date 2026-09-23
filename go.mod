@@ -1,4 +1,4 @@
-module github.com/example/wp-host-panel
+module github.com/kazemsoft/panel4wp
 
 go 1.26.0
 

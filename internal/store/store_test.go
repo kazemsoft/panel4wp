@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/example/wp-host-panel/internal/core"
+	"github.com/kazemsoft/panel4wp/internal/core"
 )
 
 func TestStorePersistsSites(t *testing.T) {

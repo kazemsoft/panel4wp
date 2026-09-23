@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/example/wp-host-panel/internal/core"
+	"github.com/kazemsoft/panel4wp/internal/core"
 )
 
 type fakeDocker struct{ calls [][]string }

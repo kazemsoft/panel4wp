@@ -13,7 +13,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/example/wp-host-panel/internal/store"
+	"github.com/kazemsoft/panel4wp/internal/store"
 )
 
 func TestLoginCreateAndRejectMissingCSRF(t *testing.T) {

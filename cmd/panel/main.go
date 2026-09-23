@@ -21,8 +21,8 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/example/wp-host-panel/internal/core"
-	"github.com/example/wp-host-panel/internal/store"
+	"github.com/kazemsoft/panel4wp/internal/core"
+	"github.com/kazemsoft/panel4wp/internal/store"
 )
 
 var page = template.Must(template.New("page").Funcs(template.FuncMap{"hasSuffix": strings.HasSuffix, "formatTime": func(t time.Time) string { return t.Local().Format("2006-01-02 15:04") }}).Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>WP Host Panel</title><style>

@@ -8,7 +8,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/example/wp-host-panel/internal/core"
+	"github.com/kazemsoft/panel4wp/internal/core"
 )
 
 type Store struct {
