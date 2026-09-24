@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html/template"
 	"io"
 	"log"
 	"mime"
@@ -27,44 +26,15 @@ import (
 
 	"github.com/kazemsoft/panel4wp/internal/audit"
 	"github.com/kazemsoft/panel4wp/internal/core"
+	"github.com/kazemsoft/panel4wp/internal/i18n"
 	"github.com/kazemsoft/panel4wp/internal/settings"
 	"github.com/kazemsoft/panel4wp/internal/store"
+	frontend "github.com/kazemsoft/panel4wp/ui/assets"
 )
 
-var page = template.Must(template.New("page").Funcs(template.FuncMap{"hasSuffix": strings.HasSuffix, "formatTime": func(t time.Time) string { return t.Local().Format("2006-01-02 15:04") }, "formatBytes": func(n int64) string {
-	if n < 1024 {
-		return fmt.Sprintf("%d B", n)
-	}
-	if n < 1024*1024 {
-		return fmt.Sprintf("%.1f KiB", float64(n)/1024)
-	}
-	if n < 1024*1024*1024 {
-		return fmt.Sprintf("%.1f MiB", float64(n)/(1024*1024))
-	}
-	return fmt.Sprintf("%.2f GiB", float64(n)/(1024*1024*1024))
-}}).Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>panel4wp · WordPress workspace</title><style>
-:root{--bg:#f6f8fb;--surface:#fff;--ink:#192639;--muted:#718096;--line:#e5eaf1;--primary:#4355d6;--soft:#eef0ff;--danger:#be354b}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}a{color:var(--primary);text-decoration:none}a:hover{text-decoration:underline}button,input,select{font:inherit}button,.button{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:1px solid transparent;background:var(--primary);color:#fff;border-radius:9px;padding:9px 15px;font-weight:600;cursor:pointer;transition:background .15s,box-shadow .15s}button:hover,.button:hover{background:#3343b6;text-decoration:none}button:focus-visible,a:focus-visible,summary:focus-visible{outline:3px solid #a8b2ff;outline-offset:3px}button.secondary,.button.secondary{background:#fff;color:#52617a;border-color:var(--line)}button.secondary:hover,.button.secondary:hover{background:#f0f3f8}button.danger{background:#fff3f4;color:var(--danger);border-color:#f2d4da}button:disabled{opacity:.65;cursor:wait}input,select{display:block;width:100%;padding:10px 12px;margin-top:6px;border:1px solid #d8dfea;border-radius:9px;background:#fff;color:var(--ink)}input:focus,select:focus{outline:3px solid #eef0ff;border-color:#8e9bea}input[type=hidden]{display:none}input[type=file]{padding:8px}label{display:block;font-size:12px;font-weight:650;color:#536178;margin:16px 0}h1,h2,h3,p{margin-top:0}h1{font-size:28px;line-height:1.25;letter-spacing:-.8px;margin-bottom:8px}h2{font-size:18px;letter-spacing:-.35px;margin-bottom:16px}h3{font-size:16px;margin-bottom:5px}small,.muted{color:var(--muted)}small{font-size:12px}.eyebrow{font-size:10px;letter-spacing:1.7px;text-transform:uppercase;font-weight:700;color:#8590a3}.shell{display:grid;grid-template-columns:226px minmax(0,1fr);min-height:100vh}.sidebar{background:#fff;border-right:1px solid var(--line);padding:32px 22px;display:flex;flex-direction:column;position:sticky;top:0;height:100vh}.brand{display:flex;align-items:center;gap:10px;color:var(--ink);font-size:20px;font-weight:750;letter-spacing:-.5px;margin-bottom:40px}.brand:hover{text-decoration:none}.mark{display:grid;place-items:center;width:35px;height:35px;background:var(--primary);color:#fff;border-radius:11px;font-size:18px}.nav-link{display:block;padding:11px 14px;border-radius:9px;margin:5px 0;font-weight:600;color:#647089}.nav-link.active{background:var(--soft);color:var(--primary)}.sidebar .eyebrow{margin:20px 14px 8px}.sidebar-footer{margin-top:auto;padding-top:30px}.sidebar-footer p{font-size:12px;color:var(--muted)}.github-cta{display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:14px;border:1px solid var(--line);border-radius:12px;color:var(--ink);margin-bottom:12px;background:#fafbff}.github-cta:hover{background:var(--soft);text-decoration:none}.github-cta svg{width:34px;height:34px;color:#202938;margin-bottom:5px}.github-cta strong{font-size:13px}.github-cta small{font-size:10px;line-height:1.4;color:var(--muted)}.workspace{padding:35px 40px;max-width:1600px;width:100%;margin:0 auto;align-self:start}.topbar{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-bottom:30px}.topbar p{margin:0;color:var(--muted)}.admin-chip{background:white;border:1px solid var(--line);border-radius:30px;padding:7px 13px;font-size:12px;color:#69758b}.dot{display:inline-block;width:7px;height:7px;background:#5aab85;border-radius:50%;margin-right:7px}.overview{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-bottom:28px}.metric{padding:20px 24px;background:#fff;border:1px solid var(--line);border-radius:13px}.metric strong{display:block;font-size:23px;font-weight:650;margin-top:5px}.metric span{font-size:12px;color:var(--muted)}main.dashboard{display:grid;grid-template-columns:minmax(0,1fr) 310px;gap:24px;align-items:start}section,.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:24px;margin-bottom:20px}.create-card{grid-column:2;grid-row:1;position:sticky;top:24px}.sites-section{grid-column:1;grid-row:1;background:none;border:0;padding:0}.section-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}.section-head h2{margin:0}.section-head a{font-size:12px;font-weight:600}.site-card{padding:0;overflow:hidden}.site-head{display:flex;align-items:flex-start;gap:13px;padding:22px 24px}.site-icon{width:42px;height:42px;flex-shrink:0;background:#f1f3fd;border:1px solid #e5e9fb;border-radius:12px;display:grid;place-items:center;color:#6874c6;font-weight:700;font-size:21px}.site-meta{min-width:0;flex:1}.site-meta a,.site-meta small{overflow-wrap:anywhere}.site-meta small{display:block;margin-top:4px;font-size:11px}.badge{display:inline-block;border-radius:30px;padding:3px 9px;font-size:10px;font-weight:700;background:#edf0f5;color:#718096;text-transform:uppercase;letter-spacing:.6px}.badge.running{color:#278260;background:#eaf7f0}.badge.failed{color:#b03e50;background:#fff0f2}.badge.stopped{color:#8b6c30;background:#fff7e7}.site-actions{padding:16px 24px;border-top:1px solid var(--line);background:#fcfdff;display:flex;align-items:center;flex-wrap:wrap;gap:8px}.inline{display:inline-block;margin:0}.inline button{font-size:12px;padding:7px 11px}.site-actions>small{width:100%;font-size:11px}.site-details{padding:0 24px 16px}.site-details:empty{display:none}details{border-top:1px solid var(--line);padding:12px 0}summary{cursor:pointer;font-weight:600;color:#69758b;font-size:12px}details form{padding:12px 0}details form+form{border-top:1px solid var(--line)}details p{margin:10px 0}details label{margin:10px 0}.danger-zone summary{color:#aa5261}.error,.success{padding:14px 18px;border-radius:10px;overflow-wrap:anywhere;white-space:pre-line;font-size:13px;margin-bottom:20px}.error{background:#fff0f2;color:#a43448;border:1px solid #f4dce0}.success{background:#eaf7f0;color:#277653;border:1px solid #d6eedf}.empty{text-align:center;padding:45px 20px;background:#fff;border:1px dashed #d5ddea;border-radius:14px;color:var(--muted)}.empty h3{color:var(--ink)}.roadmap{margin-top:12px}.roadmap-head{display:flex;align-items:center;gap:12px;margin-bottom:15px}.roadmap-head h2{margin:0}.roadmap-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.future{padding:14px;border:1px dashed #dce2ee;border-radius:10px;color:#7b879a;font-size:12px;background:#fafbfe}.future span{display:block;font-size:10px;color:#9aa5b5;margin-top:3px}.login-layout{min-height:100vh;display:grid;place-items:center;padding:25px}.login-card{width:100%;max-width:420px;padding:38px;box-shadow:0 12px 50px #24355408}.login-card .brand{margin-bottom:30px}.login-card button,.create-card button{width:100%}.login-card h1{font-size:24px}.login-card .error,.login-card .success{margin-top:15px}code{font-size:12px;overflow-wrap:anywhere}.file-topbar{margin-bottom:20px}.file-topbar h1{margin-top:15px}.table-wrap{overflow-x:auto}table{width:100%;border-collapse:collapse;min-width:550px}th{font-size:10px;letter-spacing:.8px;text-transform:uppercase;color:#8a95a7;font-weight:600}td,th{padding:13px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}td{font-size:12px}td:first-child{overflow-wrap:anywhere;max-width:380px}.file-tools{display:grid;grid-template-columns:1fr 1fr;gap:20px}.file-tools form{display:flex;align-items:end;gap:10px}.file-tools label{flex:1;margin:0}.file-tools input{min-width:0}.file-tools button{white-space:nowrap}.path{background:#f7f9fc;padding:11px 14px;border-radius:8px;font-size:12px}.hint{font-size:12px;color:var(--muted)}@media(min-width:1600px){.workspace{padding:40px 55px}}@media(max-width:1150px){.workspace{padding:28px 25px}.shell{grid-template-columns:185px minmax(0,1fr)}.sidebar{padding:28px 15px}main.dashboard{grid-template-columns:minmax(0,1fr) 270px;gap:18px}.site-head{padding:18px}.site-actions{padding:14px 18px}.site-details{padding:0 18px 14px}.roadmap-grid{grid-template-columns:repeat(3,1fr)}.file-tools{grid-template-columns:1fr}}@media(max-width:900px){main.dashboard{display:flex;flex-direction:column}.create-card{position:static;width:100%;order:2}.sites-section{width:100%;order:1}.overview{gap:10px}.metric{padding:16px}.metric strong{font-size:20px}}@media(max-width:650px){.shell{display:block}.sidebar{position:static;height:auto;padding:14px 20px;display:flex;flex-direction:row;flex-wrap:wrap;align-items:center;gap:10px;border-right:0;border-bottom:1px solid var(--line)}.brand{font-size:18px;margin:0}.mark{width:30px;height:30px}.sidebar nav{display:flex;margin-left:auto}.sidebar .eyebrow,.sidebar-footer p,.sidebar .roadmap-nav{display:none}.sidebar-footer{margin:0;padding:0}.github-cta{padding:6px 8px;margin:0}.github-cta svg{width:18px;height:18px;margin:0}.github-cta small{display:none}.github-cta strong{font-size:10px}.sidebar-footer button{font-size:11px;padding:7px 10px}.nav-link{font-size:11px;padding:7px 10px;margin:0}.workspace{padding:24px 16px}.topbar{padding-bottom:22px}.topbar h1{font-size:24px}.admin-chip{display:none}.overview{grid-template-columns:1fr 1fr}.overview .metric:last-child{display:none}.metric strong{font-size:18px}.site-head{gap:10px}.site-icon{display:none}.badge{font-size:9px;padding:3px 7px}.roadmap-grid{grid-template-columns:1fr 1fr}.file-tools form{display:block}.file-tools button{margin-top:12px}.section-head{align-items:flex-start}section{padding:20px}.login-card{padding:28px}.site-actions .button{font-size:12px;padding:7px 11px}}
-</style></head><body>{{if not .LoggedIn}}<div class="login-layout"><section class="login-card"><a class="brand" href="/"><span class="mark">p</span>panel4wp</a><div class="eyebrow">Your WordPress workspace</div><h1>Welcome back.</h1><p class="muted">Sign in to manage your sites.</p>{{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}{{if .Message}}<p class="success" role="status">{{.Message}}</p>{{end}}<form action="/login" method="post"><label>Administrator password<input type="password" name="password" autocomplete="current-password" required autofocus></label><button><span aria-hidden="true">↗</span> Log in →</button></form><p class="hint" style="margin:22px 0 0">Private control. Open-source foundation.</p></section></div>{{else}}<div class="shell"><aside class="sidebar"><a class="brand" href="/"><span class="mark">p</span>panel4wp</a><nav><div class="eyebrow">Workspace</div><a class="nav-link{{if or (eq .Page "dashboard") (eq .Page "new") (eq .Page "site") (eq .Page "backups") (eq .Page "updates") (eq .Page "database")}} active{{end}}" href="/">▦ &nbsp; My sites</a><a class="nav-link{{if eq .Page "settings"}} active{{end}}" href="/settings">⚙ &nbsp; Settings</a><a class="nav-link{{if eq .Page "activity"}} active{{end}}" href="/activity">◷ &nbsp; Activity</a><a class="nav-link roadmap-nav{{if eq .Page "roadmap"}} active{{end}}" href="/roadmap">◷ &nbsp; What's next</a></nav><div class="sidebar-footer"><a class="github-cta" href="https://github.com/kazemsoft/panel4wp" target="_blank" rel="noopener"><svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.18-3.37-1.18-.45-1.15-1.11-1.46-1.11-1.46-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.89 1.52 2.34 1.08 2.91.83.09-.64.35-1.08.64-1.33-2.22-.25-4.55-1.11-4.55-4.94 0-1.09.39-1.99 1.03-2.69-.1-.25-.45-1.27.1-2.65 0 0 .84-.27 2.75 1.03a9.58 9.58 0 0 1 5 0c1.91-1.3 2.75-1.03 2.75-1.03.55 1.38.2 2.4.1 2.65.64.7 1.03 1.6 1.03 2.69 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.58c0 .27.18.58.69.48A10 10 0 0 0 12 2Z"/></svg><strong>Star panel4wp on GitHub</strong><small>Like this project? Support its development by giving it a star.</small></a><form action="/logout" method="post"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="secondary"><span aria-hidden="true">↗</span> Log out</button></form></div></aside><div class="workspace"><header class="topbar"><div><div class="eyebrow">Overview</div><h1>{{.PageTitle}}</h1><p>{{.Guide}}</p></div><span class="admin-chip"><span class="dot"></span>Administrator</span></header>{{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}{{if .Message}}<p class="success" role="status">{{.Message}}</p>{{end}}{{if eq .Page "dashboard"}}<div class="overview"><div class="metric"><span>Managed sites</span><strong>{{len .Sites}}</strong></div><div class="metric"><span>Hosting environment</span><strong>Your server</strong></div><div class="metric"><span>Workspace access</span><strong>Single administrator</strong></div></div>{{end}}<main class="page-content">{{if eq .Page "new"}}<section id="create-site" style="max-width:660px"><div class="eyebrow">New workspace</div><h2>Create a site</h2><p class="hint">A fresh WordPress installation, ready in a few moments.</p><form action="/sites" method="post"><input type="hidden" name="csrf" value="{{.CSRF}}"><label>Domain<input name="domain" placeholder="example.com"></label><label>Site title<input name="title" required maxlength="120"></label><label>WordPress admin email<input type="email" name="email" required></label><label>Resource plan<select name="plan"><option value="small">Small · 384 MB · 0.5 CPU</option><option value="standard" selected>Standard · 768 MB · 1 CPU</option><option value="large">Large · 1536 MB · 2 CPUs</option></select></label><p><button><span aria-hidden="true">↗</span> Create site</button></p></form><small>Blank domain creates an HTTP-only *.localhost site for testing on this computer. Public domains require DNS to point to this server.</small></section>
-{{end}}{{if or (eq .Page "dashboard") (eq .Page "site") (eq .Page "backups") (eq .Page "updates") (eq .Page "database")}}<section class="sites-section" id="sites"><div class="section-head"><div><h2>{{if eq .Page "dashboard"}}Your sites <span class="badge">{{len .Sites}}</span>{{else}}Site workspace{{end}}</h2></div>{{if eq .Page "dashboard"}}<a class="button" href="/sites/new">＋ Add site</a>{{else}}<a href="/sites/{{.SelectedID}}?stats=1">↻ Refresh usage</a>{{end}}</div>{{if not .Sites}}<div class="empty"><h3>Your first site starts here</h3><p>Create a WordPress site to manage its files, database and backups in one place.</p><a href="/sites/new">Create your first site →</a></div>{{else}}{{if .StatsError}}<p class="error">{{.StatsError}}</p>{{end}}{{range .Sites}}{{$site := .}}{{$stats := index $.Stats .ID}}{{$storage := index $.Storage .ID}}<article class="card site-card"><div class="site-head"><div class="site-icon">W</div><div class="site-meta"><h3>{{.Title}}</h3><a href="{{if hasSuffix .Domain ".localhost"}}http{{else}}https{{end}}://{{.Domain}}" target="_blank" rel="noopener">{{.Domain}}</a><small>{{.ID}} · {{.MemoryMB}} MB · {{.CPUs}} CPU</small></div><span class="badge {{.Status}}">{{.Status}}</span></div><div class="site-details">{{if $stats}}<details><summary>Live resource usage</summary>{{if $stats.WordPress}}<p><small><strong>WordPress</strong> · CPU {{$stats.WordPress.CPU}} · Memory {{$stats.WordPress.Memory}} ({{$stats.WordPress.MemoryPC}}) · Network {{$stats.WordPress.NetIO}} · Disk I/O {{$stats.WordPress.BlockIO}} · PIDs {{$stats.WordPress.PIDs}}</small></p>{{end}}{{if $stats.Database}}<p><small><strong>Database</strong> · CPU {{$stats.Database.CPU}} · Memory {{$stats.Database.Memory}} ({{$stats.Database.MemoryPC}}) · Network {{$stats.Database.NetIO}} · Disk I/O {{$stats.Database.BlockIO}} · PIDs {{$stats.Database.PIDs}}</small></p>{{end}}{{if $storage}}<p><small><strong>Storage</strong> · WordPress {{formatBytes $storage.WordPressBytes}} · Database {{formatBytes $storage.DatabaseBytes}} · Backups {{formatBytes $storage.BackupBytes}}</small></p>{{end}}</details>{{end}}{{if .Error}}<p class="error">{{.Error}}</p>{{end}}</div>{{if eq $.Page "dashboard"}}<div class="site-actions"><a class="button secondary" href="/sites/{{.ID}}">⚙ Manage site</a></div>{{else}}<div class="site-actions"><a class="button secondary" href="/sites/{{.ID}}">▦ Overview</a><a class="button secondary" href="/sites/{{.ID}}/backups">▣ Backups</a><a class="button secondary" href="/sites/{{.ID}}/updates">↻ Updates</a><a class="button secondary" href="/sites/{{.ID}}/database">▤ Database</a><a class="button secondary" href="/sites/{{.ID}}/files">▱ Files</a></div><div class="site-actions">
-{{if and (eq $.Page "site") (eq .Status "running")}}<form class="inline" action="/sites/{{.ID}}/stop" method="post"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="secondary"><span aria-hidden="true">↗</span> Stop</button></form>{{end}}
-{{if and (eq $.Page "backups") (eq .Status "running")}}<form class="inline" action="/sites/{{.ID}}/backup" method="post"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button><span aria-hidden="true">↗</span> Back up now</button></form>{{end}}
-{{if and (eq $.Page "updates") (eq .Status "running")}}<form class="inline" action="/sites/{{.ID}}/update" method="post"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="secondary"><span aria-hidden="true">↗</span> Update WordPress</button></form>{{end}}
+type languageOption = i18n.Language
 
-{{if and (eq $.Page "database") (eq .Status "running")}}<form class="inline" action="/sites/{{.ID}}/database-start" method="post"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="secondary"><span aria-hidden="true">↗</span> Open database manager</button></form><small>Database access closes after 15 minutes. WordPress updates include a safety backup.</small>{{end}}
-{{if and (eq $.Page "site") (eq .Status "stopped")}}<form class="inline" action="/sites/{{.ID}}/start" method="post"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button><span aria-hidden="true">↗</span> Start</button></form>{{end}}
-{{if and (eq $.Page "site") (eq .Status "failed")}}<form class="inline" action="/sites/{{.ID}}/retry" method="post"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button><span aria-hidden="true">↗</span> Retry</button></form>{{end}}
-</div><div class="site-details">{{if and (eq $.Page "backups") .Backups}}<details open><summary>Backups & recovery · {{len .Backups}} available</summary><p class="hint">Restore replaces the current files and database. A safety backup is created first.</p>{{range .Backups}}<div class="backup-item"><small>{{formatTime .CreatedAt}} · {{.ID}}</small><form action="/sites/{{$site.ID}}/restore" method="post"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="backup_id" value="{{.ID}}"><label>Type {{$site.Domain}} to confirm restore<input name="confirm" required></label><p><button class="danger"><span aria-hidden="true">↗</span> Restore this backup</button></p></form><form action="/sites/{{$site.ID}}/backup-delete" method="post"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="backup_id" value="{{.ID}}"><label>Type {{$site.Domain}} to confirm deletion<input name="confirm" required></label><p><button class="danger"><span aria-hidden="true">⌫</span> Delete backup</button></p></form></div>{{end}}</details>{{end}}
-{{if eq $.Page "site"}}<details><summary>Outgoing email {{if .MailEnabled}}<span class="badge running">Enabled</span>{{end}}</summary><p class="hint">Use the encrypted global SMTP configuration for this site.</p>{{if eq .Status "running"}}<form action="/sites/{{.ID}}/{{if .MailEnabled}}mail-disable{{else}}mail-enable{{end}}" method="post"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="secondary"><span aria-hidden="true">↗</span> {{if .MailEnabled}}Disable SMTP{{else}}Enable global SMTP{{end}}</button></form>{{else}}<p class="hint">Start the site before changing mail delivery.</p>{{end}}</details><details class="danger-zone"><summary>Delete permanently</summary><p class="hint">This removes the site, database and all backups. This cannot be undone.</p><form action="/sites/{{.ID}}/delete" method="post"><input type="hidden" name="csrf" value="{{$.CSRF}}"><label>Type domain to confirm<input name="confirm" required placeholder="{{.Domain}}"></label><p><button class="danger"><span aria-hidden="true">↗</span> Delete site and data</button></p></form></details>{{end}}</div>{{end}}</article>{{end}}{{end}}</section>{{end}}</main>{{if eq .Page "settings"}}<section id="settings"><div class="roadmap-head"><h2>Mail server settings</h2>{{if .Mail.Enabled}}<span class="badge running">Enabled</span>{{else}}<span class="badge">Disabled</span>{{end}}</div><p class="hint">One encrypted SMTP connection can be enabled independently for each WordPress site.</p><form action="/settings/mail" method="post"><input type="hidden" name="csrf" value="{{.CSRF}}"><label><input type="checkbox" name="enabled" {{if .Mail.Enabled}}checked{{end}} style="display:inline;width:auto;margin-right:8px">Enable global SMTP</label><div class="file-tools"><div><label>SMTP host<input name="smtp_host" value="{{.Mail.Host}}" placeholder="smtp.example.com" autocomplete="off"></label><label>Encryption<select name="smtp_encryption"><option value="starttls" {{if eq .Mail.Encryption "starttls"}}selected{{end}}>STARTTLS</option><option value="tls" {{if eq .Mail.Encryption "tls"}}selected{{end}}>TLS</option><option value="none" {{if eq .Mail.Encryption "none"}}selected{{end}}>None</option></select></label><label>Username<input name="smtp_username" value="{{.Mail.Username}}" autocomplete="off"></label><label>From email<input type="email" name="smtp_from_email" value="{{.Mail.FromEmail}}" placeholder="hello@example.com"></label></div><div><label>Port<input type="number" name="smtp_port" value="{{if .Mail.Port}}{{.Mail.Port}}{{end}}" placeholder="587" min="1" max="65535"></label><label>Sender name<input name="smtp_from_name" value="{{.Mail.FromName}}" placeholder="Your company"></label><label>Password<input type="password" name="smtp_password" autocomplete="new-password" placeholder="{{if .MailPasswordSet}}Leave blank to keep existing password{{else}}SMTP password{{end}}"></label><p class="hint">The password is encrypted on disk and never sent back to the browser.</p></div></div><button><span aria-hidden="true">↗</span> Save mail settings</button></form></section>{{end}}{{if eq .Page "activity"}}<section id="activity"><div class="roadmap-head"><h2>Recent activity</h2><span class="badge">{{len .Activity}} events</span></div>{{if .Activity}}<div class="table-wrap"><table><thead><tr><th>Time</th><th>Action</th><th>Site</th><th>Result</th></tr></thead><tbody>{{range .Activity}}<tr><td>{{formatTime .Time}}</td><td>{{.Action}}</td><td>{{if .Domain}}{{.Domain}}{{else}}—{{end}}</td><td>{{if .Success}}Success{{else}}Failed{{end}}</td></tr>{{end}}</tbody></table></div>{{else}}<p class="hint">Administrator actions will appear here.</p>{{end}}</section>{{end}}{{if eq .Page "roadmap"}}<section class="roadmap" id="roadmap"><div class="roadmap-head"><h2>On the horizon</h2><span class="badge">Coming soon</span></div><p class="hint">Planned capabilities. These features are not available yet.</p><div class="roadmap-grid"><div class="future">SFTP access<span>Secure file transfer</span></div><div class="future">Automated alerts<span>Keep an eye on server health</span></div><div class="future">Image upgrades<span>Manage container versions</span></div><div class="future">Storage quotas<span>Usage reporting is live; hard limits are next</span></div><div class="future">Scheduled remote backups<span>Protect data off this server</span></div><div class="future">Customer accounts<span>Separate customer workspaces</span></div></div></section>{{end}}<p class="hint">panel4wp · Built for independent WordPress hosting.</p></div></div>{{end}}</body></html>`))
-
-var filesPage = template.Must(template.New("files").Funcs(template.FuncMap{"formatTime": func(ts int64) string { return time.Unix(ts, 0).Local().Format("2006-01-02 15:04") }}).Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>panel4wp · WordPress workspace</title><style>
-:root{--bg:#f6f8fb;--surface:#fff;--ink:#192639;--muted:#718096;--line:#e5eaf1;--primary:#4355d6;--soft:#eef0ff;--danger:#be354b}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}a{color:var(--primary);text-decoration:none}a:hover{text-decoration:underline}button,input,select{font:inherit}button,.button{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:1px solid transparent;background:var(--primary);color:#fff;border-radius:9px;padding:9px 15px;font-weight:600;cursor:pointer;transition:background .15s,box-shadow .15s}button:hover,.button:hover{background:#3343b6;text-decoration:none}button:focus-visible,a:focus-visible,summary:focus-visible{outline:3px solid #a8b2ff;outline-offset:3px}button.secondary,.button.secondary{background:#fff;color:#52617a;border-color:var(--line)}button.secondary:hover,.button.secondary:hover{background:#f0f3f8}button.danger{background:#fff3f4;color:var(--danger);border-color:#f2d4da}button:disabled{opacity:.65;cursor:wait}input,select{display:block;width:100%;padding:10px 12px;margin-top:6px;border:1px solid #d8dfea;border-radius:9px;background:#fff;color:var(--ink)}input:focus,select:focus{outline:3px solid #eef0ff;border-color:#8e9bea}input[type=hidden]{display:none}input[type=file]{padding:8px}label{display:block;font-size:12px;font-weight:650;color:#536178;margin:16px 0}h1,h2,h3,p{margin-top:0}h1{font-size:28px;line-height:1.25;letter-spacing:-.8px;margin-bottom:8px}h2{font-size:18px;letter-spacing:-.35px;margin-bottom:16px}h3{font-size:16px;margin-bottom:5px}small,.muted{color:var(--muted)}small{font-size:12px}.eyebrow{font-size:10px;letter-spacing:1.7px;text-transform:uppercase;font-weight:700;color:#8590a3}.shell{display:grid;grid-template-columns:226px minmax(0,1fr);min-height:100vh}.sidebar{background:#fff;border-right:1px solid var(--line);padding:32px 22px;display:flex;flex-direction:column;position:sticky;top:0;height:100vh}.brand{display:flex;align-items:center;gap:10px;color:var(--ink);font-size:20px;font-weight:750;letter-spacing:-.5px;margin-bottom:40px}.brand:hover{text-decoration:none}.mark{display:grid;place-items:center;width:35px;height:35px;background:var(--primary);color:#fff;border-radius:11px;font-size:18px}.nav-link{display:block;padding:11px 14px;border-radius:9px;margin:5px 0;font-weight:600;color:#647089}.nav-link.active{background:var(--soft);color:var(--primary)}.sidebar .eyebrow{margin:20px 14px 8px}.sidebar-footer{margin-top:auto;padding-top:30px}.sidebar-footer p{font-size:12px;color:var(--muted)}.github-cta{display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:14px;border:1px solid var(--line);border-radius:12px;color:var(--ink);margin-bottom:12px;background:#fafbff}.github-cta:hover{background:var(--soft);text-decoration:none}.github-cta svg{width:34px;height:34px;color:#202938;margin-bottom:5px}.github-cta strong{font-size:13px}.github-cta small{font-size:10px;line-height:1.4;color:var(--muted)}.workspace{padding:35px 40px;max-width:1600px;width:100%;margin:0 auto;align-self:start}.topbar{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-bottom:30px}.topbar p{margin:0;color:var(--muted)}.admin-chip{background:white;border:1px solid var(--line);border-radius:30px;padding:7px 13px;font-size:12px;color:#69758b}.dot{display:inline-block;width:7px;height:7px;background:#5aab85;border-radius:50%;margin-right:7px}.overview{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-bottom:28px}.metric{padding:20px 24px;background:#fff;border:1px solid var(--line);border-radius:13px}.metric strong{display:block;font-size:23px;font-weight:650;margin-top:5px}.metric span{font-size:12px;color:var(--muted)}main.dashboard{display:grid;grid-template-columns:minmax(0,1fr) 310px;gap:24px;align-items:start}section,.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:24px;margin-bottom:20px}.create-card{grid-column:2;grid-row:1;position:sticky;top:24px}.sites-section{grid-column:1;grid-row:1;background:none;border:0;padding:0}.section-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px}.section-head h2{margin:0}.section-head a{font-size:12px;font-weight:600}.site-card{padding:0;overflow:hidden}.site-head{display:flex;align-items:flex-start;gap:13px;padding:22px 24px}.site-icon{width:42px;height:42px;flex-shrink:0;background:#f1f3fd;border:1px solid #e5e9fb;border-radius:12px;display:grid;place-items:center;color:#6874c6;font-weight:700;font-size:21px}.site-meta{min-width:0;flex:1}.site-meta a,.site-meta small{overflow-wrap:anywhere}.site-meta small{display:block;margin-top:4px;font-size:11px}.badge{display:inline-block;border-radius:30px;padding:3px 9px;font-size:10px;font-weight:700;background:#edf0f5;color:#718096;text-transform:uppercase;letter-spacing:.6px}.badge.running{color:#278260;background:#eaf7f0}.badge.failed{color:#b03e50;background:#fff0f2}.badge.stopped{color:#8b6c30;background:#fff7e7}.site-actions{padding:16px 24px;border-top:1px solid var(--line);background:#fcfdff;display:flex;align-items:center;flex-wrap:wrap;gap:8px}.inline{display:inline-block;margin:0}.inline button{font-size:12px;padding:7px 11px}.site-actions>small{width:100%;font-size:11px}.site-details{padding:0 24px 16px}.site-details:empty{display:none}details{border-top:1px solid var(--line);padding:12px 0}summary{cursor:pointer;font-weight:600;color:#69758b;font-size:12px}details form{padding:12px 0}details form+form{border-top:1px solid var(--line)}details p{margin:10px 0}details label{margin:10px 0}.danger-zone summary{color:#aa5261}.error,.success{padding:14px 18px;border-radius:10px;overflow-wrap:anywhere;white-space:pre-line;font-size:13px;margin-bottom:20px}.error{background:#fff0f2;color:#a43448;border:1px solid #f4dce0}.success{background:#eaf7f0;color:#277653;border:1px solid #d6eedf}.empty{text-align:center;padding:45px 20px;background:#fff;border:1px dashed #d5ddea;border-radius:14px;color:var(--muted)}.empty h3{color:var(--ink)}.roadmap{margin-top:12px}.roadmap-head{display:flex;align-items:center;gap:12px;margin-bottom:15px}.roadmap-head h2{margin:0}.roadmap-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.future{padding:14px;border:1px dashed #dce2ee;border-radius:10px;color:#7b879a;font-size:12px;background:#fafbfe}.future span{display:block;font-size:10px;color:#9aa5b5;margin-top:3px}.login-layout{min-height:100vh;display:grid;place-items:center;padding:25px}.login-card{width:100%;max-width:420px;padding:38px;box-shadow:0 12px 50px #24355408}.login-card .brand{margin-bottom:30px}.login-card button,.create-card button{width:100%}.login-card h1{font-size:24px}.login-card .error,.login-card .success{margin-top:15px}code{font-size:12px;overflow-wrap:anywhere}.file-topbar{margin-bottom:20px}.file-topbar h1{margin-top:15px}.table-wrap{overflow-x:auto}table{width:100%;border-collapse:collapse;min-width:550px}th{font-size:10px;letter-spacing:.8px;text-transform:uppercase;color:#8a95a7;font-weight:600}td,th{padding:13px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}td{font-size:12px}td:first-child{overflow-wrap:anywhere;max-width:380px}.file-tools{display:grid;grid-template-columns:1fr 1fr;gap:20px}.file-tools form{display:flex;align-items:end;gap:10px}.file-tools label{flex:1;margin:0}.file-tools input{min-width:0}.file-tools button{white-space:nowrap}.path{background:#f7f9fc;padding:11px 14px;border-radius:8px;font-size:12px}.hint{font-size:12px;color:var(--muted)}@media(min-width:1600px){.workspace{padding:40px 55px}}@media(max-width:1150px){.workspace{padding:28px 25px}.shell{grid-template-columns:185px minmax(0,1fr)}.sidebar{padding:28px 15px}main.dashboard{grid-template-columns:minmax(0,1fr) 270px;gap:18px}.site-head{padding:18px}.site-actions{padding:14px 18px}.site-details{padding:0 18px 14px}.roadmap-grid{grid-template-columns:repeat(3,1fr)}.file-tools{grid-template-columns:1fr}}@media(max-width:900px){main.dashboard{display:flex;flex-direction:column}.create-card{position:static;width:100%;order:2}.sites-section{width:100%;order:1}.overview{gap:10px}.metric{padding:16px}.metric strong{font-size:20px}}@media(max-width:650px){.shell{display:block}.sidebar{position:static;height:auto;padding:14px 20px;display:flex;flex-direction:row;flex-wrap:wrap;align-items:center;gap:10px;border-right:0;border-bottom:1px solid var(--line)}.brand{font-size:18px;margin:0}.mark{width:30px;height:30px}.sidebar nav{display:flex;margin-left:auto}.sidebar .eyebrow,.sidebar-footer p,.sidebar .roadmap-nav{display:none}.sidebar-footer{margin:0;padding:0}.github-cta{padding:6px 8px;margin:0}.github-cta svg{width:18px;height:18px;margin:0}.github-cta small{display:none}.github-cta strong{font-size:10px}.sidebar-footer button{font-size:11px;padding:7px 10px}.nav-link{font-size:11px;padding:7px 10px;margin:0}.workspace{padding:24px 16px}.topbar{padding-bottom:22px}.topbar h1{font-size:24px}.admin-chip{display:none}.overview{grid-template-columns:1fr 1fr}.overview .metric:last-child{display:none}.metric strong{font-size:18px}.site-head{gap:10px}.site-icon{display:none}.badge{font-size:9px;padding:3px 7px}.roadmap-grid{grid-template-columns:1fr 1fr}.file-tools form{display:block}.file-tools button{margin-top:12px}.section-head{align-items:flex-start}section{padding:20px}.login-card{padding:28px}.site-actions .button{font-size:12px;padding:7px 11px}}
-</style></head><body><div class="shell"><aside class="sidebar"><a class="brand" href="/"><span class="mark">p</span>panel4wp</a><nav><div class="eyebrow">Workspace</div><a class="nav-link active" href="/">▦ &nbsp; My sites</a><a class="nav-link" href="/settings">⚙ &nbsp; Settings</a><a class="nav-link" href="/activity">◷ &nbsp; Activity</a><a class="nav-link roadmap-nav" href="/roadmap">◷ &nbsp; What's next</a></nav><div class="sidebar-footer"><a class="github-cta" href="https://github.com/kazemsoft/panel4wp" target="_blank" rel="noopener"><svg aria-hidden="true" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.18-3.37-1.18-.45-1.15-1.11-1.46-1.11-1.46-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.89 1.52 2.34 1.08 2.91.83.09-.64.35-1.08.64-1.33-2.22-.25-4.55-1.11-4.55-4.94 0-1.09.39-1.99 1.03-2.69-.1-.25-.45-1.27.1-2.65 0 0 .84-.27 2.75 1.03a9.58 9.58 0 0 1 5 0c1.91-1.3 2.75-1.03 2.75-1.03.55 1.38.2 2.4.1 2.65.64.7 1.03 1.6 1.03 2.69 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.58c0 .27.18.58.69.48A10 10 0 0 0 12 2Z"/></svg><strong>Star panel4wp on GitHub</strong><small>Like this project? Support its development by giving it a star.</small></a><form action="/logout" method="post"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="secondary"><span aria-hidden="true">↗</span> Log out</button></form></div></aside><div class="workspace"><header class="file-topbar"><a href="/">← Back to your sites</a><div class="eyebrow" style="margin-top:24px">Site workspace</div><h1>File manager</h1><p class="muted">{{.Site.Domain}} · wp-content</p></header>
-{{if .Error}}<p class="error">{{.Error}}</p>{{end}}{{if .Message}}<p class="success">{{.Message}}</p>{{end}}
-<section><p class="path">Path: <code>/wp-content{{if .CurrentPath}}/{{.CurrentPath}}{{end}}</code></p>{{if .HasParent}}<p><a href="/sites/{{.Site.ID}}/files?path={{urlquery .Parent}}">↑ Parent directory</a></p>{{end}}
-<div class="table-wrap"><table><thead><tr><th>Name</th><th>Size</th><th>Modified</th><th>Actions</th></tr></thead><tbody>{{range .Entries}}<tr><td>{{if eq .Type "directory"}}<a href="/sites/{{$.Site.ID}}/files?path={{urlquery .Path}}">📁 {{.Name}}</a>{{else}}{{if eq .Type "file"}}📄 {{.Name}}{{else}}🔗 {{.Name}}{{end}}{{end}}</td><td>{{if eq .Type "file"}}{{.Size}} bytes{{end}}</td><td>{{formatTime .Modified}}</td><td>{{if eq .Type "file"}}<form class="inline" action="/sites/{{$.Site.ID}}/download" method="post"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="path" value="{{.Path}}"><button><span aria-hidden="true">↗</span> Download</button></form>{{end}}{{if ne .Type "link"}} <details class="danger-zone"><summary>Delete</summary><p class="hint">Permanently delete {{.Name}}?</p><form class="inline" action="/sites/{{$.Site.ID}}/file-delete" method="post"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="path" value="{{.Path}}"><button class="danger"><span aria-hidden="true">↗</span> Confirm delete</button></form></details>{{end}}</td></tr>{{else}}<tr><td colspan="4">This directory is empty.</td></tr>{{end}}</tbody></table></div></section>
-<div class="file-tools"><section><h2>Upload a file</h2><form action="/sites/{{.Site.ID}}/upload" method="post" enctype="multipart/form-data"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="path" value="{{.CurrentPath}}"><label>Select a file<input type="file" name="file" required></label><button><span aria-hidden="true">↗</span> Upload · max 10 MB</button></form></section>
-<section><h2>Create directory</h2><form action="/sites/{{.Site.ID}}/mkdir" method="post"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="path" value="{{.CurrentPath}}"><label>Directory name<input name="name" required maxlength="120" placeholder="directory-name"></label><button><span aria-hidden="true">↗</span> Create</button></form></section>
-</div><p class="hint">Access is restricted to this site's <code>wp-content</code>. Symbolic links cannot be downloaded, modified, or deleted.</p></div></div></body></html>`))
+var assetHandler = http.StripPrefix("/assets/", http.FileServer(http.FS(frontend.Files)))
 
 type fileEntryView struct {
 	core.FileEntry
@@ -80,7 +50,13 @@ type filesView struct {
 	Entries     []fileEntryView
 	Error       string
 	Message     string
+	Language    string
+	Direction   string
+	Languages   []languageOption
+	PagePath    string
 }
+
+func (v filesView) T(key string) string { return i18n.T(v.Language, key) }
 
 type view struct {
 	Page            string
@@ -98,6 +74,59 @@ type view struct {
 	Mail            settings.Mail
 	MailPasswordSet bool
 	Activity        []audit.Entry
+	Language        string
+	Direction       string
+	Languages       []languageOption
+	CurrentPath     string
+}
+
+func (v view) T(key string) string { return i18n.T(v.Language, key) }
+
+func formatTime(t time.Time) string  { return t.Local().Format("2006-01-02 15:04") }
+func formatUnixTime(ts int64) string { return formatTime(time.Unix(ts, 0)) }
+func formatBytes(n int64) string {
+	if n < 1024 {
+		return fmt.Sprintf("%d B", n)
+	}
+	if n < 1024*1024 {
+		return fmt.Sprintf("%.1f KiB", float64(n)/1024)
+	}
+	if n < 1024*1024*1024 {
+		return fmt.Sprintf("%.1f MiB", float64(n)/(1024*1024))
+	}
+	return fmt.Sprintf("%.2f GiB", float64(n)/(1024*1024*1024))
+}
+func isSitePage(pageName string) bool {
+	switch pageName {
+	case "dashboard", "new", "site", "backups", "updates", "database", "files":
+		return true
+	default:
+		return false
+	}
+}
+func sitePublicURL(domain string) string {
+	if strings.HasSuffix(domain, ".localhost") {
+		return "http://" + domain
+	}
+	return "https://" + domain
+}
+func mailAction(enabled bool) string {
+	if enabled {
+		return "/mail-disable"
+	}
+	return "/mail-enable"
+}
+func portValue(port int) string {
+	if port == 0 {
+		return ""
+	}
+	return strconv.Itoa(port)
+}
+func passwordPlaceholder(v view) string {
+	if v.MailPasswordSet {
+		return v.T("keep_password")
+	}
+	return v.T("smtp_password")
 }
 
 type app struct {
@@ -173,18 +202,22 @@ func (a *app) render(w http.ResponseWriter, r *http.Request, v view) {
 	if v.Page == "" {
 		v.Page = "dashboard"
 	}
+	v.Language = i18n.Resolve(r)
+	v.Direction = i18n.Direction(v.Language)
+	v.Languages = i18n.Languages()
+	v.CurrentPath = r.URL.RequestURI()
 	headings := map[string][2]string{
-		"dashboard": {"Your WordPress workspace", "View your sites and resource usage. Choose Manage site to open its tools."},
-		"new":       {"Create a WordPress site", "Enter your site details and choose its resources. Leave the domain blank for a local test."},
-		"settings":  {"Mail server settings", "Save your SMTP connection here, then enable it from each site's overview."},
-		"activity":  {"Recent activity", "Review administrator operations and their results. The most recent 20 events are shown."},
-		"site":      {"Manage your site", "Check status and resources, manage email, or choose a tool below. Stop pauses the site without deleting data."},
-		"backups":   {"Backups & recovery", "Create a backup before making changes. Restoring replaces current files and database; a safety backup is created first."},
-		"updates":   {"WordPress updates", "Update the core, plugins and themes together. A verified backup is created before updating. Keep this page open until the operation completes."},
-		"database":  {"Database manager", "Open phpMyAdmin to browse or edit this site's database. Access closes automatically after 15 minutes. Back up before editing data."},
-		"roadmap":   {"What's next", "These features are planned and are not available yet."},
+		"dashboard": {"dashboard_title", "dashboard_guide"},
+		"new":       {"new_title", "new_guide"},
+		"settings":  {"settings_title", "settings_guide"},
+		"activity":  {"activity_title", "activity_guide"},
+		"site":      {"site_title_page", "site_guide"},
+		"backups":   {"backups_title", "backups_guide"},
+		"updates":   {"updates_title", "updates_guide"},
+		"database":  {"database_title", "database_guide"},
+		"roadmap":   {"roadmap_title", "roadmap_guide"},
 	}
-	v.PageTitle, v.Guide = headings[v.Page][0], headings[v.Page][1]
+	v.PageTitle, v.Guide = i18n.T(v.Language, headings[v.Page][0]), i18n.T(v.Language, headings[v.Page][1])
 	if v.LoggedIn {
 		sites, err := a.store.List()
 		if err != nil {
@@ -255,7 +288,9 @@ func (a *app) render(w http.ResponseWriter, r *http.Request, v view) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "DENY")
-	_ = page.Execute(w, v)
+	if err := page(v).Render(r.Context(), w); err != nil {
+		log.Printf("page render failed: %v", err)
+	}
 }
 
 func (a *app) sign(payload string) string {
@@ -353,7 +388,7 @@ func removePanelCookies(req *http.Request) {
 	cookies := req.Cookies()
 	req.Header.Del("Cookie")
 	for _, cookie := range cookies {
-		if cookie.Name != "wph_session" && cookie.Name != "wph_flash" {
+		if cookie.Name != "wph_session" && cookie.Name != "wph_flash" && cookie.Name != i18n.CookieName {
 			req.AddCookie(cookie)
 		}
 	}
@@ -393,9 +428,34 @@ func (a *app) proxyDatabase(w http.ResponseWriter, r *http.Request) {
 	proxy.ServeHTTP(w, r)
 }
 
+func safeLanguageNext(raw string) string {
+	if raw == "" || !strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "//") {
+		return "/"
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.IsAbs() || parsed.Host != "" {
+		return "/"
+	}
+	return parsed.RequestURI()
+}
+
 func (a *app) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/health" {
 		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/assets/") {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Cache-Control", "public, max-age=3600")
+		assetHandler.ServeHTTP(w, r)
+		return
+	}
+	if r.Method == http.MethodGet && r.URL.Path == "/language" {
+		if !i18n.SetCookie(w, r.URL.Query().Get("lang"), a.secureCookie) {
+			http.Error(w, "unsupported language", http.StatusBadRequest)
+			return
+		}
+		http.Redirect(w, r, safeLanguageNext(r.URL.Query().Get("next")), http.StatusSeeOther)
 		return
 	}
 	if r.Method == http.MethodGet && r.URL.Path == "/" {
@@ -411,7 +471,7 @@ func (a *app) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if r.ParseForm() != nil || bcrypt.CompareHashAndPassword(a.adminHash, []byte(r.FormValue("password"))) != nil {
 			a.recordFailure(ip)
-			a.render(w, r, view{Error: "Invalid password"})
+			a.render(w, r, view{Error: i18n.T(i18n.Resolve(r), "invalid_password")})
 			return
 		}
 		expiry := time.Now().Add(8 * time.Hour)
@@ -873,7 +933,9 @@ func (a *app) renderFiles(w http.ResponseWriter, r *http.Request, site core.Site
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "DENY")
-	if err := filesPage.Execute(w, filesView{Site: site, CSRF: csrf, CurrentPath: current, Parent: parent, HasParent: hasParent, Entries: items, Error: viewError, Message: message}); err != nil {
+	language := i18n.Resolve(r)
+	fileView := filesView{Site: site, CSRF: csrf, CurrentPath: current, Parent: parent, HasParent: hasParent, Entries: items, Error: viewError, Message: message, Language: language, Direction: i18n.Direction(language), Languages: i18n.Languages(), PagePath: r.URL.RequestURI()}
+	if err := filesPage(fileView).Render(r.Context(), w); err != nil {
 		log.Printf("file page render failed: %v", err)
 	}
 }

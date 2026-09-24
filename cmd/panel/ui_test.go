@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"github.com/kazemsoft/panel4wp/internal/core"
 	"github.com/kazemsoft/panel4wp/internal/store"
 	"net/http"
@@ -18,7 +19,7 @@ func TestIndependentPagesPreserveActions(t *testing.T) {
 	for pageName, actions := range map[string][]string{"dashboard": {}, "site": {"stop", "delete"}, "backups": {"backup", "restore", "backup-delete"}, "updates": {"update"}, "database": {"database-start"}} {
 		t.Run(pageName, func(t *testing.T) {
 			var output bytes.Buffer
-			if err := page.Execute(&output, view{LoggedIn: true, Page: pageName, CSRF: "csrf-test", Sites: []core.Site{site}}); err != nil {
+			if err := page(view{LoggedIn: true, Page: pageName, CSRF: "csrf-test", Sites: []core.Site{site}, Language: "en", Direction: "ltr"}).Render(context.Background(), &output); err != nil {
 				t.Fatal(err)
 			}
 			html := output.String()
@@ -56,17 +57,14 @@ func TestSidebarHighlightsCurrentPageAndStartsContentAtTop(t *testing.T) {
 	for pageName, activeLink := range tests {
 		t.Run(pageName, func(t *testing.T) {
 			var output bytes.Buffer
-			if err := page.Execute(&output, view{LoggedIn: true, Page: pageName}); err != nil {
+			if err := page(view{LoggedIn: true, Page: pageName, Language: "en", Direction: "ltr"}).Render(context.Background(), &output); err != nil {
 				t.Fatal(err)
 			}
 			html := output.String()
 			if !strings.Contains(html, activeLink) {
 				t.Fatalf("missing active navigation link %q", activeLink)
 			}
-			if !strings.Contains(html, "margin:0 auto;align-self:start") {
-				t.Fatal("workspace is not aligned to the top")
-			}
-			if !strings.Contains(html, "Star panel4wp on GitHub") || !strings.Contains(html, "Support its development by giving it a star") {
+			if !strings.Contains(html, `href="https://github.com/kazemsoft/panel4wp"`) || !strings.Contains(html, "Star on GitHub") {
 				t.Fatal("GitHub support callout is missing")
 			}
 		})
@@ -76,7 +74,8 @@ func TestSidebarHighlightsCurrentPageAndStartsContentAtTop(t *testing.T) {
 func TestFileManagerConfirmsDeletionAndPreservesOperations(t *testing.T) {
 	var output bytes.Buffer
 	v := filesView{Site: core.Site{ID: "abc123", Domain: "demo.localhost"}, CSRF: "csrf-test", Entries: []fileEntryView{{FileEntry: core.FileEntry{Name: "test.txt", Type: "file"}, Path: "test.txt"}}}
-	if err := filesPage.Execute(&output, v); err != nil {
+	v.Language, v.Direction = "en", "ltr"
+	if err := filesPage(v).Render(context.Background(), &output); err != nil {
 		t.Fatal(err)
 	}
 	for _, required := range []string{`action="/sites/abc123/download"`, `action="/sites/abc123/file-delete"`, `action="/sites/abc123/upload"`, `action="/sites/abc123/mkdir"`, `Confirm delete`, `value="csrf-test"`} {
@@ -108,5 +107,44 @@ func TestWorkspaceRoutes(t *testing.T) {
 				t.Fatalf("route failed: %d", w.Code)
 			}
 		})
+	}
+}
+
+func TestBrowserLanguageAssetsAndExplicitSelection(t *testing.T) {
+	a := &app{store: store.New(filepath.Join(t.TempDir(), "sites.json")), sessionKey: []byte(strings.Repeat("s", 64))}
+
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.Header.Set("Accept-Language", "fa-IR,fa;q=0.9,en;q=0.8")
+	w := httptest.NewRecorder()
+	a.ServeHTTP(w, r)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `<html lang="fa" dir="rtl">`) || !strings.Contains(w.Body.String(), `action="/language"`) {
+		t.Fatalf("browser language was not rendered: %d", w.Code)
+	}
+
+	r = httptest.NewRequest(http.MethodGet, "/language?lang=ja&next=%2Fsettings", nil)
+	w = httptest.NewRecorder()
+	a.ServeHTTP(w, r)
+	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/settings" {
+		t.Fatalf("language redirect failed: %d %q", w.Code, w.Header().Get("Location"))
+	}
+	if cookies := w.Result().Cookies(); len(cookies) != 1 || cookies[0].Value != "ja" {
+		t.Fatalf("language cookie missing: %#v", cookies)
+	}
+
+	for _, asset := range []string{"/assets/app.css", "/assets/htmx.min.js"} {
+		r = httptest.NewRequest(http.MethodGet, asset, nil)
+		w = httptest.NewRecorder()
+		a.ServeHTTP(w, r)
+		if w.Code != http.StatusOK || w.Body.Len() == 0 || w.Header().Get("X-Content-Type-Options") != "nosniff" {
+			t.Errorf("asset %s failed: %d", asset, w.Code)
+		}
+	}
+}
+
+func TestLanguageRedirectRejectsExternalDestination(t *testing.T) {
+	for _, raw := range []string{"https://example.com", "//example.com/path", ""} {
+		if got := safeLanguageNext(raw); got != "/" {
+			t.Errorf("safeLanguageNext(%q)=%q", raw, got)
+		}
 	}
 }

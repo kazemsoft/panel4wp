@@ -17,6 +17,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
+      - run: go generate ./cmd/panel
+      - run: git diff --exit-code -- cmd/panel/views_templ.go
       - run: go test -race ./...
       - run: go vet ./...
       - run: docker compose config --quiet

@@ -44,6 +44,8 @@ The Settings section stores one global SMTP connection encrypted with AES-GCM us
 
 Recent administrator operations are written to a private, size-limited JSON Lines audit log and shown in the Activity section.
 
+The panel is available in English, Arabic, Persian, Spanish, German, French, Chinese, and Japanese. On the first visit it follows the browser's preferred supported language and falls back to English. The language selector is visible on both the login screen and the authenticated sidebar; an explicit choice is saved in a one-year cookie. Arabic and Persian render right-to-left.
+
 Deleting a site removes its containers, Docker volumes, local backups, and all credentials. Enter the exact domain to confirm. Copy important backups to separate storage because local backups are lost with the server or disk.
 
 Update the panel from its repository directory with:
@@ -66,9 +68,16 @@ The installer, panel, worker, and Caddy are Apache-2.0 licensed. WordPress, Mari
 
 Successful long-running operations use Post/Redirect/Get with one-time in-memory result messages. This prevents Caddy route updates from interrupting the administrator response and avoids putting generated WordPress passwords in URLs or persistent metadata.
 
+## Frontend
+
+The panel uses type-safe `templ` components rendered by Go, self-hosted HTMX for progressive enhancement, and Tailwind CSS 4 CLI. Compiled CSS and JavaScript are embedded into the panel binary; the runtime container contains no Node.js and the UI does not depend on a CDN. Translation dictionaries live under `internal/i18n`, and the complete UI is shared across all languages.
+
 ## Development
 
 ```sh
+npm ci
+npm run build
+go generate ./cmd/panel
 go test ./...
 docker compose config --quiet
 ```

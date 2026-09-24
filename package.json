@@ -1,0 +1,16 @@
+{
+  "name": "panel4wp-frontend",
+  "private": true,
+  "scripts": {
+    "build": "npm run build:css && npm run build:js",
+    "build:css": "tailwindcss -i ./ui/assets/input.css -o ./ui/assets/app.css --minify",
+    "build:js": "mkdir -p ./ui/assets && cp ./node_modules/htmx.org/dist/htmx.min.js ./ui/assets/htmx.min.js"
+  },
+  "dependencies": {
+    "htmx.org": "2.0.11"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "4.3.3",
+    "tailwindcss": "4.3.3"
+  }
+}
