@@ -70,7 +70,7 @@ Successful long-running operations use Post/Redirect/Get with one-time in-memory
 
 ## Frontend
 
-The panel uses type-safe `templ` components rendered by Go, self-hosted HTMX for progressive enhancement, and Tailwind CSS 4 CLI. Compiled CSS and JavaScript are embedded into the panel binary; the runtime container contains no Node.js and the UI does not depend on a CDN. Translation dictionaries live under `internal/i18n`, and the complete UI is shared across all languages.
+The panel uses type-safe `templ` components rendered by Go, self-hosted HTMX for progressive enhancement, and Tailwind CSS 4 CLI. Compiled CSS, JavaScript, inline SVG icons, and the OFL-licensed Vazirmatn font for Persian and Arabic are embedded into the panel binary; the runtime container contains no Node.js and the UI does not depend on a CDN. The authenticated sidebar can be collapsed and stores its display preference in local browser storage. Translation dictionaries live under `internal/i18n`, and the complete UI is shared across all languages.
 
 ## Development
 

@@ -3,6 +3,8 @@ package i18n
 var dictionaries = map[string]map[string]string{
 	"en": {
 		"language":               "Language",
+		"collapse_sidebar":       "Collapse sidebar",
+		"expand_sidebar":         "Expand sidebar",
 		"apply":                  "Apply",
 		"github_help":            "Like this project? Support its development by giving it a star.",
 		"delete_backup":          "Delete backup",
@@ -153,6 +155,8 @@ var dictionaries = map[string]map[string]string{
 	},
 	"ar": {
 		"language":               "اللغة",
+		"collapse_sidebar":       "طي الشريط الجانبي",
+		"expand_sidebar":         "توسيع الشريط الجانبي",
 		"apply":                  "تطبيق",
 		"github_help":            "إذا أعجبك المشروع، ادعم تطويره بمنحه نجمة.",
 		"delete_backup":          "حذف النسخة الاحتياطية",
@@ -303,6 +307,8 @@ var dictionaries = map[string]map[string]string{
 	},
 	"fa": {
 		"language":               "زبان",
+		"collapse_sidebar":       "بستن نوار کناری",
+		"expand_sidebar":         "باز کردن نوار کناری",
 		"apply":                  "اعمال",
 		"github_help":            "اگر این پروژه را دوست دارید، با ستاره دادن از توسعهٔ آن حمایت کنید.",
 		"delete_backup":          "حذف نسخهٔ پشتیبان",
@@ -453,6 +459,8 @@ var dictionaries = map[string]map[string]string{
 	},
 	"es": {
 		"language":               "Idioma",
+		"collapse_sidebar":       "Contraer barra lateral",
+		"expand_sidebar":         "Expandir barra lateral",
 		"apply":                  "Aplicar",
 		"github_help":            "Si te gusta el proyecto, apoya su desarrollo con una estrella.",
 		"delete_backup":          "Eliminar copia",
@@ -603,6 +611,8 @@ var dictionaries = map[string]map[string]string{
 	},
 	"de": {
 		"language":               "Sprache",
+		"collapse_sidebar":       "Seitenleiste einklappen",
+		"expand_sidebar":         "Seitenleiste ausklappen",
 		"apply":                  "Anwenden",
 		"github_help":            "Gefällt dir das Projekt? Unterstütze die Entwicklung mit einem Stern.",
 		"delete_backup":          "Backup löschen",
@@ -753,6 +763,8 @@ var dictionaries = map[string]map[string]string{
 	},
 	"fr": {
 		"language":               "Langue",
+		"collapse_sidebar":       "Réduire la barre latérale",
+		"expand_sidebar":         "Développer la barre latérale",
 		"apply":                  "Appliquer",
 		"github_help":            "Vous aimez ce projet ? Soutenez son développement avec une étoile.",
 		"delete_backup":          "Supprimer la sauvegarde",
@@ -903,6 +915,8 @@ var dictionaries = map[string]map[string]string{
 	},
 	"zh": {
 		"language":               "语言",
+		"collapse_sidebar":       "收起侧边栏",
+		"expand_sidebar":         "展开侧边栏",
 		"apply":                  "应用",
 		"github_help":            "喜欢这个项目？请点亮星标支持开发。",
 		"delete_backup":          "删除备份",
@@ -1053,6 +1067,8 @@ var dictionaries = map[string]map[string]string{
 	},
 	"ja": {
 		"language":               "言語",
+		"collapse_sidebar":       "サイドバーを折りたたむ",
+		"expand_sidebar":         "サイドバーを展開",
 		"apply":                  "適用",
 		"github_help":            "このプロジェクトを気に入ったら、スターで開発を応援してください。",
 		"delete_backup":          "バックアップを削除",

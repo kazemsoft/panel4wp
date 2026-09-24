@@ -16,12 +16,97 @@ templ languageSwitcher(lang, currentPath string, languages []languageOption, t f
 				<option value={ option.Code } selected?={ option.Code == lang }>{ option.Name }</option>
 			}
 		</select>
-		<noscript><button class="secondary language-submit" type="submit">{ t("apply") }</button></noscript>
+		<noscript><button class="secondary language-submit" type="submit">@icon("check")<span class="button-label">{ t("apply") }</span></button></noscript>
 	</form>
 }
 
+templ icon(name string) {
+	<svg class={ "icon icon-" + name } aria-hidden="true" viewBox="0 0 24 24">
+		switch name {
+			case "login":
+				<path d="M10 17l5-5-5-5"></path><path d="M15 12H3"></path><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path>
+			case "logout":
+				<path d="M14 8l4 4-4 4"></path><path d="M18 12H7"></path><path d="M10 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h5"></path>
+			case "sites":
+				<rect x="3" y="3" width="7" height="7" rx="1"></rect><rect x="14" y="3" width="7" height="7" rx="1"></rect><rect x="3" y="14" width="7" height="7" rx="1"></rect><rect x="14" y="14" width="7" height="7" rx="1"></rect>
+			case "settings":
+				<path d="M4 7h10"></path><path d="M18 7h2"></path><circle cx="16" cy="7" r="2"></circle><path d="M4 17h2"></path><path d="M10 17h10"></path><circle cx="8" cy="17" r="2"></circle>
+			case "activity":
+				<circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path>
+			case "roadmap":
+				<path d="m12 3 1.2 3.1L16 7.5l-2.8 1.4L12 12l-1.2-3.1L8 7.5l2.8-1.4L12 3Z"></path><path d="m18.5 13 .8 2 1.7.8-1.7.9-.8 2.1-.8-2.1-1.7-.9 1.7-.8.8-2Z"></path><path d="m5.5 14 .8 2 1.7.8-1.7.9-.8 2.1-.8-2.1-1.7-.9 1.7-.8.8-2Z"></path>
+			case "plus":
+				<path d="M12 5v14"></path><path d="M5 12h14"></path>
+			case "manage":
+				<circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"></path>
+			case "dashboard":
+				<rect x="3" y="3" width="18" height="18" rx="2"></rect><path d="M9 3v18"></path><path d="M9 9h12"></path>
+			case "backup":
+				<path d="M4 7h16v13H4z"></path><path d="M3 3h18v4H3z"></path><path d="M9 12h6"></path>
+			case "refresh":
+				<path d="M20 11a8 8 0 0 0-14.9-4L3 10"></path><path d="M3 4v6h6"></path><path d="M4 13a8 8 0 0 0 14.9 4L21 14"></path><path d="M21 20v-6h-6"></path>
+			case "database":
+				<ellipse cx="12" cy="5" rx="8" ry="3"></ellipse><path d="M4 5v7c0 1.7 3.6 3 8 3s8-1.3 8-3V5"></path><path d="M4 12v7c0 1.7 3.6 3 8 3s8-1.3 8-3v-7"></path>
+			case "files":
+				<path d="M3 6a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6Z"></path>
+			case "stop":
+				<rect x="6" y="6" width="12" height="12" rx="2"></rect>
+			case "play":
+				<path d="m8 5 11 7-11 7V5Z"></path>
+			case "mail":
+				<rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="m4 7 8 6 8-6"></path>
+			case "trash":
+				<path d="M4 7h16"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="m6 7 1 14h10l1-14"></path><path d="M9 7V4h6v3"></path>
+			case "restore":
+				<path d="M3 12a9 9 0 1 0 3-6.7L3 8"></path><path d="M3 3v5h5"></path><path d="M12 7v5l3 2"></path>
+			case "download":
+				<path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M4 21h16"></path>
+			case "upload":
+				<path d="M12 16V4"></path><path d="m7 9 5-5 5 5"></path><path d="M4 20h16"></path>
+			case "folder-plus":
+				<path d="M3 6a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6Z"></path><path d="M12 11v6"></path><path d="M9 14h6"></path>
+			case "arrow-left":
+				<path d="m15 18-6-6 6-6"></path><path d="M9 12h11"></path>
+			case "arrow-up":
+				<path d="m6 10 6-6 6 6"></path><path d="M12 4v16"></path>
+			case "check":
+				<path d="m5 12 4 4L19 6"></path>
+			case "file":
+				<path d="M6 2h8l4 4v16H6z"></path><path d="M14 2v5h5"></path>
+			case "link":
+				<path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1.1 1.1"></path><path d="M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1.1-1.1"></path>
+			case "panel-close":
+				<rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M9 4v16"></path><path d="m15 9-3 3 3 3"></path>
+			case "panel-open":
+				<rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M9 4v16"></path><path d="m13 9 3 3-3 3"></path>
+		}
+	</svg>
+}
+
+templ logoMark() {
+	<span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 40 40" fill="none"><circle cx="20" cy="20" r="17.5" fill="#4355d6"></circle><circle cx="20" cy="20" r="13" stroke="white" stroke-width="1.5" opacity=".55"></circle><path d="M15.5 29V11.5h6.2a6 6 0 0 1 0 12h-6.2m0-7h5.7a1 1 0 0 1 0 2h-5.7" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"></path></svg></span>
+}
+
 templ brand() {
-	<a class="brand" href="/"><span class="mark">p</span>panel4wp</a>
+	<a class="brand" href="/">@logoMark()<span class="brand-name">panel4wp</span></a>
+}
+
+templ sidebar(language, currentPath string, languages []languageOption, t func(string) string, csrf, pageName string) {
+	<aside class="sidebar" id="app-sidebar">
+		<div class="sidebar-header">@brand()<button class="sidebar-toggle secondary" type="button" data-sidebar-toggle data-collapse-label={ t("collapse_sidebar") } data-expand-label={ t("expand_sidebar") } aria-controls="app-sidebar" aria-expanded="true">@icon("panel-close")@icon("panel-open")</button></div>
+		<nav>
+			<div class="eyebrow">{ t("workspace") }</div>
+			<a class={ templ.Classes("nav-link", templ.KV("active", isSitePage(pageName))) } href="/" title={ t("my_sites") }>@icon("sites")<span class="nav-label">{ t("my_sites") }</span></a>
+			<a class={ templ.Classes("nav-link", templ.KV("active", pageName == "settings")) } href="/settings" title={ t("settings") }>@icon("settings")<span class="nav-label">{ t("settings") }</span></a>
+			<a class={ templ.Classes("nav-link", templ.KV("active", pageName == "activity")) } href="/activity" title={ t("activity") }>@icon("activity")<span class="nav-label">{ t("activity") }</span></a>
+			<a class={ templ.Classes("nav-link", "roadmap-nav", templ.KV("active", pageName == "roadmap")) } href="/roadmap" title={ t("whats_next") }>@icon("roadmap")<span class="nav-label">{ t("whats_next") }</span></a>
+		</nav>
+		<div class="sidebar-footer">
+			@languageSwitcher(language, currentPath, languages, t)
+			@githubCTA(t)
+			<form action="/logout" method="post"><input type="hidden" name="csrf" value={ csrf }/><button class="secondary" title={ t("log_out") }>@icon("logout")<span class="button-label">{ t("log_out") }</span></button></form>
+		</div>
+	</aside>
 }
 
 templ githubCTA(t func(string) string) {
@@ -37,8 +122,9 @@ templ documentHead(v view) {
 		<meta charset="utf-8"/>
 		<meta name="viewport" content="width=device-width, initial-scale=1"/>
 		<title>panel4wp · { v.T("workspace") }</title>
-		<link rel="stylesheet" href="/assets/app.css"/>
-		<script src="/assets/htmx.min.js" defer></script>
+		<link rel="stylesheet" href="/assets/app.css?v=3"/>
+		<script src="/assets/htmx.min.js?v=3" defer></script>
+		<script src="/assets/app.js?v=3" defer></script>
 	</head>
 }
 
@@ -67,7 +153,7 @@ templ loginPage(v view) {
 			@alerts(v.Error, v.Message)
 			<form action="/login" method="post">
 				<label>{ v.T("administrator_password") }<input type="password" name="password" autocomplete="current-password" required autofocus/></label>
-				<button><span aria-hidden="true">↗</span> { v.T("log_in") }</button>
+				<button>@icon("login")<span class="button-label">{ v.T("log_in") }</span></button>
 			</form>
 			<p class="hint login-note">{ v.T("private_control") }</p>
 		</section>
@@ -76,21 +162,7 @@ templ loginPage(v view) {
 
 templ appShell(v view) {
 	<div class="shell">
-					<aside class="sidebar">
-						@brand()
-						<nav>
-							<div class="eyebrow">{ v.T("workspace") }</div>
-							<a class={ templ.Classes("nav-link", templ.KV("active", isSitePage(v.Page))) } href="/">▦ &nbsp; { v.T("my_sites") }</a>
-							<a class={ templ.Classes("nav-link", templ.KV("active", v.Page == "settings")) } href="/settings">⚙ &nbsp; { v.T("settings") }</a>
-							<a class={ templ.Classes("nav-link", templ.KV("active", v.Page == "activity")) } href="/activity">◷ &nbsp; { v.T("activity") }</a>
-							<a class={ templ.Classes("nav-link", "roadmap-nav", templ.KV("active", v.Page == "roadmap")) } href="/roadmap">◷ &nbsp; { v.T("whats_next") }</a>
-						</nav>
-						<div class="sidebar-footer">
-							@languageSwitcher(v.Language, v.CurrentPath, v.Languages, v.T)
-							@githubCTA(v.T)
-							<form action="/logout" method="post"><input type="hidden" name="csrf" value={ v.CSRF }/><button class="secondary"><span aria-hidden="true">↗</span> { v.T("log_out") }</button></form>
-						</div>
-					</aside>
+		@sidebar(v.Language, v.CurrentPath, v.Languages, v.T, v.CSRF, v.Page)
 					<div class="workspace">
 						<header class="topbar"><div><div class="eyebrow">{ v.T("overview") }</div><h1>{ v.PageTitle }</h1><p>{ v.Guide }</p></div><span class="admin-chip"><span class="dot"></span>{ v.T("administrator") }</span></header>
 						@alerts(v.Error, v.Message)
@@ -141,7 +213,7 @@ templ newSite(v view) {
 			<label>{ v.T("site_title") }<input name="title" required maxlength="120"/></label>
 			<label>{ v.T("wordpress_admin_email") }<input type="email" name="email" required/></label>
 			<label>{ v.T("resource_plan") }<select name="plan"><option value="small">{ v.T("plan_small") } · 384 MB · 0.5 CPU</option><option value="standard" selected>{ v.T("plan_standard") } · 768 MB · 1 CPU</option><option value="large">{ v.T("plan_large") } · 1536 MB · 2 CPUs</option></select></label>
-			<p><button><span aria-hidden="true">＋</span> { v.T("create_site") }</button></p>
+			<p><button>@icon("plus")<span class="button-label">{ v.T("create_site") }</span></button></p>
 		</form><small>{ v.T("local_domain_hint") }</small>
 	</section>
 }
@@ -156,9 +228,9 @@ templ sites(v view) {
 			}
 		</h2></div>
 		if v.Page == "dashboard" {
-			<a class="button" href="/sites/new">＋ { v.T("add_site") }</a>
+			<a class="button" href="/sites/new">@icon("plus")<span class="button-label">{ v.T("add_site") }</span></a>
 		} else {
-			<a href={ templ.URL("/sites/" + v.SelectedID + "?stats=1") }>↻ { v.T("refresh_usage") }</a>
+			<a class="icon-link" href={ templ.URL("/sites/" + v.SelectedID + "?stats=1") }>@icon("refresh")<span>{ v.T("refresh_usage") }</span></a>
 		}</div>
 		if len(v.Sites) == 0 {
 			<div class="empty"><h3>{ v.T("first_site_title") }</h3><p>{ v.T("first_site_help") }</p><a href="/sites/new">{ v.T("create_first_site") } →</a></div>
@@ -197,7 +269,7 @@ templ siteCard(v view, site core.Site) {
 			}
 		</div>
 		if v.Page == "dashboard" {
-			<div class="site-actions"><a class="button secondary" href={ templ.URL("/sites/" + site.ID) }>⚙ { v.T("manage_site") }</a></div>
+			<div class="site-actions"><a class="button secondary" href={ templ.URL("/sites/" + site.ID) }>@icon("manage")<span class="button-label">{ v.T("manage_site") }</span></a></div>
 		} else {
 			@siteWorkspace(v, site)
 		}
@@ -206,27 +278,27 @@ templ siteCard(v view, site core.Site) {
 
 templ siteWorkspace(v view, site core.Site) {
 	<div class="site-actions">
-		<a class="button secondary" href={ templ.URL("/sites/" + site.ID) }>▦ { v.T("overview") }</a><a class="button secondary" href={ templ.URL("/sites/" + site.ID + "/backups") }>▣ { v.T("backups") }</a><a class="button secondary" href={ templ.URL("/sites/" + site.ID + "/updates") }>↻ { v.T("updates") }</a><a class="button secondary" href={ templ.URL("/sites/" + site.ID + "/database") }>▤ { v.T("database") }</a><a class="button secondary" href={ templ.URL("/sites/" + site.ID + "/files") }>▱ { v.T("files") }</a>
+		<a class="button secondary" href={ templ.URL("/sites/" + site.ID) }>@icon("dashboard")<span class="button-label">{ v.T("overview") }</span></a><a class="button secondary" href={ templ.URL("/sites/" + site.ID + "/backups") }>@icon("backup")<span class="button-label">{ v.T("backups") }</span></a><a class="button secondary" href={ templ.URL("/sites/" + site.ID + "/updates") }>@icon("refresh")<span class="button-label">{ v.T("updates") }</span></a><a class="button secondary" href={ templ.URL("/sites/" + site.ID + "/database") }>@icon("database")<span class="button-label">{ v.T("database") }</span></a><a class="button secondary" href={ templ.URL("/sites/" + site.ID + "/files") }>@icon("files")<span class="button-label">{ v.T("files") }</span></a>
 	</div>
 	<div class="site-actions">
 		if v.Page == "site" && site.Status == core.StatusRunning {
-			@actionForm(v.CSRF, "/sites/"+site.ID+"/stop", "secondary", "■", v.T("stop"))
+			@actionForm(v.CSRF, "/sites/"+site.ID+"/stop", "secondary", "stop", v.T("stop"))
 		}
 		if v.Page == "backups" && site.Status == core.StatusRunning {
-			@actionForm(v.CSRF, "/sites/"+site.ID+"/backup", "", "▣", v.T("backup_now"))
+			@actionForm(v.CSRF, "/sites/"+site.ID+"/backup", "", "backup", v.T("backup_now"))
 		}
 		if v.Page == "updates" && site.Status == core.StatusRunning {
-			@actionForm(v.CSRF, "/sites/"+site.ID+"/update", "secondary", "↻", v.T("update_wordpress"))
+			@actionForm(v.CSRF, "/sites/"+site.ID+"/update", "secondary", "refresh", v.T("update_wordpress"))
 		}
 		if v.Page == "database" && site.Status == core.StatusRunning {
-			@actionForm(v.CSRF, "/sites/"+site.ID+"/database-start", "secondary", "▤", v.T("open_database_manager"))
+			@actionForm(v.CSRF, "/sites/"+site.ID+"/database-start", "secondary", "database", v.T("open_database_manager"))
 			<small>{ v.T("database_access_hint") }</small>
 		}
 		if v.Page == "site" && site.Status == core.StatusStopped {
-			@actionForm(v.CSRF, "/sites/"+site.ID+"/start", "", "▶", v.T("start"))
+			@actionForm(v.CSRF, "/sites/"+site.ID+"/start", "", "play", v.T("start"))
 		}
 		if v.Page == "site" && site.Status == core.StatusFailed {
-			@actionForm(v.CSRF, "/sites/"+site.ID+"/retry", "", "↻", v.T("retry"))
+			@actionForm(v.CSRF, "/sites/"+site.ID+"/retry", "", "refresh", v.T("retry"))
 		}
 	</div>
 	<div class="site-details">
@@ -240,16 +312,16 @@ templ siteWorkspace(v view, site core.Site) {
 	</div>
 }
 
-templ actionForm(csrf, action, className, icon, label string) {
-	<form class="inline" action={ action } method="post"><input type="hidden" name="csrf" value={ csrf }/><button class={ className }><span aria-hidden="true">{ icon }</span> { label }</button></form>
+templ actionForm(csrf, action, className, iconName, label string) {
+	<form class="inline" action={ action } method="post"><input type="hidden" name="csrf" value={ csrf }/><button class={ className }>@icon(iconName)<span class="button-label">{ label }</span></button></form>
 }
 
 templ backupList(v view, site core.Site) {
 	<details open><summary>{ v.T("backups_recovery") } · { fmt.Sprintf("%d %s", len(site.Backups), v.T("available")) }</summary><p class="hint">{ v.T("restore_warning") }</p>
 		for _, backup := range site.Backups {
 			<div class="backup-item"><small>{ formatTime(backup.CreatedAt) } · { backup.ID }</small>
-			<form action={ "/sites/" + site.ID + "/restore" } method="post"><input type="hidden" name="csrf" value={ v.CSRF }/><input type="hidden" name="backup_id" value={ backup.ID }/><label>{ fmt.Sprintf(v.T("type_domain_restore"), site.Domain) }<input name="confirm" required/></label><p><button class="danger"><span aria-hidden="true">↗</span> { v.T("restore_backup") }</button></p></form>
-			<form action={ "/sites/" + site.ID + "/backup-delete" } method="post"><input type="hidden" name="csrf" value={ v.CSRF }/><input type="hidden" name="backup_id" value={ backup.ID }/><label>{ fmt.Sprintf(v.T("type_domain_delete"), site.Domain) }<input name="confirm" required/></label><p><button class="danger"><span aria-hidden="true">⌫</span> { v.T("delete_backup") }</button></p></form>
+			<form action={ "/sites/" + site.ID + "/restore" } method="post"><input type="hidden" name="csrf" value={ v.CSRF }/><input type="hidden" name="backup_id" value={ backup.ID }/><label>{ fmt.Sprintf(v.T("type_domain_restore"), site.Domain) }<input name="confirm" required/></label><p><button class="danger">@icon("restore")<span class="button-label">{ v.T("restore_backup") }</span></button></p></form>
+			<form action={ "/sites/" + site.ID + "/backup-delete" } method="post"><input type="hidden" name="csrf" value={ v.CSRF }/><input type="hidden" name="backup_id" value={ backup.ID }/><label>{ fmt.Sprintf(v.T("type_domain_delete"), site.Domain) }<input name="confirm" required/></label><p><button class="danger">@icon("trash")<span class="button-label">{ v.T("delete_backup") }</span></button></p></form>
 			</div>
 		}
 	</details>
@@ -262,13 +334,13 @@ templ siteMail(v view, site core.Site) {
 		}
 	</summary><p class="hint">{ v.T("smtp_site_hint") }</p>
 		if site.Status == core.StatusRunning {
-			<form action={ "/sites/" + site.ID + mailAction(site.MailEnabled) } method="post"><input type="hidden" name="csrf" value={ v.CSRF }/><button class="secondary"><span aria-hidden="true">✉</span>
+			<form action={ "/sites/" + site.ID + mailAction(site.MailEnabled) } method="post"><input type="hidden" name="csrf" value={ v.CSRF }/><button class="secondary">@icon("mail")<span class="button-label">
 				if site.MailEnabled {
 					{ v.T("disable_smtp") }
 				} else {
 					{ v.T("enable_global_smtp") }
 				}
-			</button></form>
+			</span></button></form>
 		} else {
 			<p class="hint">{ v.T("start_before_mail") }</p>
 		}
@@ -276,7 +348,7 @@ templ siteMail(v view, site core.Site) {
 }
 
 templ deleteSite(v view, site core.Site) {
-	<details class="danger-zone"><summary>{ v.T("delete_permanently") }</summary><p class="hint">{ v.T("delete_site_warning") }</p><form action={ "/sites/" + site.ID + "/delete" } method="post"><input type="hidden" name="csrf" value={ v.CSRF }/><label>{ v.T("type_domain_confirm") }<input name="confirm" required placeholder={ site.Domain }/></label><p><button class="danger"><span aria-hidden="true">⌫</span> { v.T("delete_site_data") }</button></p></form></details>
+	<details class="danger-zone"><summary>{ v.T("delete_permanently") }</summary><p class="hint">{ v.T("delete_site_warning") }</p><form action={ "/sites/" + site.ID + "/delete" } method="post"><input type="hidden" name="csrf" value={ v.CSRF }/><label>{ v.T("type_domain_confirm") }<input name="confirm" required placeholder={ site.Domain }/></label><p><button class="danger">@icon("trash")<span class="button-label">{ v.T("delete_site_data") }</span></button></p></form></details>
 }
 
 templ settingsPage(v view) {
@@ -289,7 +361,7 @@ templ settingsPage(v view) {
 	</div><p class="hint">{ v.T("smtp_global_hint") }</p>
 	<form action="/settings/mail" method="post"><input type="hidden" name="csrf" value={ v.CSRF }/><label class="checkbox-label"><input type="checkbox" name="enabled" checked?={ v.Mail.Enabled }/> { v.T("enable_global_smtp") }</label><div class="file-tools"><div>
 		<label>{ v.T("smtp_host") }<input name="smtp_host" value={ v.Mail.Host } placeholder="smtp.example.com" autocomplete="off"/></label><label>{ v.T("encryption") }<select name="smtp_encryption"><option value="starttls" selected?={ v.Mail.Encryption == "starttls" }>STARTTLS</option><option value="tls" selected?={ v.Mail.Encryption == "tls" }>TLS</option><option value="none" selected?={ v.Mail.Encryption == "none" }>{ v.T("none") }</option></select></label><label>{ v.T("username") }<input name="smtp_username" value={ v.Mail.Username } autocomplete="off"/></label><label>{ v.T("from_email") }<input type="email" name="smtp_from_email" value={ v.Mail.FromEmail } placeholder="hello@example.com"/></label>
-	</div><div><label>{ v.T("port") }<input type="number" name="smtp_port" value={ portValue(v.Mail.Port) } placeholder="587" min="1" max="65535"/></label><label>{ v.T("sender_name") }<input name="smtp_from_name" value={ v.Mail.FromName } placeholder={ v.T("your_company") }/></label><label>{ v.T("password") }<input type="password" name="smtp_password" autocomplete="new-password" placeholder={ passwordPlaceholder(v) }/></label><p class="hint">{ v.T("password_encrypted_hint") }</p></div></div><button><span aria-hidden="true">✓</span> { v.T("save_mail_settings") }</button></form></section>
+	</div><div><label>{ v.T("port") }<input type="number" name="smtp_port" value={ portValue(v.Mail.Port) } placeholder="587" min="1" max="65535"/></label><label>{ v.T("sender_name") }<input name="smtp_from_name" value={ v.Mail.FromName } placeholder={ v.T("your_company") }/></label><label>{ v.T("password") }<input type="password" name="smtp_password" autocomplete="new-password" placeholder={ passwordPlaceholder(v) }/></label><p class="hint">{ v.T("password_encrypted_hint") }</p></div></div><button class="form-submit">@icon("check")<span class="button-label">{ v.T("save_mail_settings") }</span></button></form></section>
 }
 
 templ activityPage(v view) {
@@ -328,26 +400,26 @@ templ future(title, help string) { <div class="future">{ title }<span>{ help }</
 
 templ filesPage(v filesView) {
 	<!doctype html><html lang={ v.Language } dir={ v.Direction }>
-	<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>panel4wp · { v.T("file_manager") }</title><link rel="stylesheet" href="/assets/app.css"/><script src="/assets/htmx.min.js" defer></script></head>
-	<body><div class="shell"><aside class="sidebar">@brand()<nav><div class="eyebrow">{ v.T("workspace") }</div><a class="nav-link active" href="/">▦ &nbsp; { v.T("my_sites") }</a><a class="nav-link" href="/settings">⚙ &nbsp; { v.T("settings") }</a><a class="nav-link" href="/activity">◷ &nbsp; { v.T("activity") }</a><a class="nav-link roadmap-nav" href="/roadmap">◷ &nbsp; { v.T("whats_next") }</a></nav><div class="sidebar-footer">@languageSwitcher(v.Language, v.PagePath, v.Languages, v.T) @githubCTA(v.T)<form action="/logout" method="post"><input type="hidden" name="csrf" value={ v.CSRF }/><button class="secondary"><span aria-hidden="true">↗</span> { v.T("log_out") }</button></form></div></aside>
-	<div class="workspace"><header class="file-topbar"><a href={ templ.URL("/sites/" + v.Site.ID) }>← { v.T("back_to_site") }</a><div class="eyebrow file-eyebrow">{ v.T("site_workspace") }</div><h1>{ v.T("file_manager") }</h1><p class="muted">{ v.Site.Domain } · wp-content</p></header>@alerts(v.Error, v.Message)
+	<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>panel4wp · { v.T("file_manager") }</title><link rel="stylesheet" href="/assets/app.css?v=3"/><script src="/assets/htmx.min.js?v=3" defer></script><script src="/assets/app.js?v=3" defer></script></head>
+	<body><div class="shell">@sidebar(v.Language, v.PagePath, v.Languages, v.T, v.CSRF, "files")
+	<div class="workspace"><header class="file-topbar"><a class="icon-link" href={ templ.URL("/sites/" + v.Site.ID) }>@icon("arrow-left")<span>{ v.T("back_to_site") }</span></a><div class="eyebrow file-eyebrow">{ v.T("site_workspace") }</div><h1>{ v.T("file_manager") }</h1><p class="muted">{ v.Site.Domain } · wp-content</p></header>@alerts(v.Error, v.Message)
 	<section><p class="path">{ v.T("path") }: <code>/wp-content
 		if v.CurrentPath != "" {
 			/{ v.CurrentPath }
 		}
 	</code></p>
 	if v.HasParent {
-		<p><a href={ templ.URL("/sites/" + v.Site.ID + "/files?path=" + url.QueryEscape(v.Parent)) }>↑ { v.T("parent_directory") }</a></p>
+		<p><a class="icon-link" href={ templ.URL("/sites/" + v.Site.ID + "/files?path=" + url.QueryEscape(v.Parent)) }>@icon("arrow-up")<span>{ v.T("parent_directory") }</span></a></p>
 	}
 	<div class="table-wrap"><table><thead><tr><th>{ v.T("name") }</th><th>{ v.T("size") }</th><th>{ v.T("modified") }</th><th>{ v.T("actions") }</th></tr></thead><tbody>
 	for _, entry := range v.Entries {
 		<tr><td>
 			if entry.Type == "directory" {
-				<a href={ templ.URL("/sites/" + v.Site.ID + "/files?path=" + url.QueryEscape(entry.Path)) }>📁 { entry.Name }</a>
+				<a class="icon-link" href={ templ.URL("/sites/" + v.Site.ID + "/files?path=" + url.QueryEscape(entry.Path)) }>@icon("files")<span>{ entry.Name }</span></a>
 			} else if entry.Type == "file" {
-				📄 { entry.Name }
+				<span class="icon-link">@icon("file")<span>{ entry.Name }</span></span>
 			} else {
-				🔗 { entry.Name }
+				<span class="icon-link">@icon("link")<span>{ entry.Name }</span></span>
 			}
 		</td><td>
 			if entry.Type == "file" {
@@ -355,10 +427,10 @@ templ filesPage(v filesView) {
 			}
 		</td><td>{ formatUnixTime(entry.Modified) }</td><td>
 			if entry.Type == "file" {
-				<form class="inline" action={ "/sites/" + v.Site.ID + "/download" } method="post"><input type="hidden" name="csrf" value={ v.CSRF }/><input type="hidden" name="path" value={ entry.Path }/><button><span aria-hidden="true">↓</span> { v.T("download") }</button></form>
+				<form class="inline" action={ "/sites/" + v.Site.ID + "/download" } method="post"><input type="hidden" name="csrf" value={ v.CSRF }/><input type="hidden" name="path" value={ entry.Path }/><button>@icon("download")<span class="button-label">{ v.T("download") }</span></button></form>
 			}
 			if entry.Type != "link" {
-				<details class="danger-zone"><summary>{ v.T("delete") }</summary><p class="hint">{ fmt.Sprintf(v.T("delete_file_question"), entry.Name) }</p><form class="inline" action={ "/sites/" + v.Site.ID + "/file-delete" } method="post"><input type="hidden" name="csrf" value={ v.CSRF }/><input type="hidden" name="path" value={ entry.Path }/><button class="danger">{ v.T("confirm_delete") }</button></form></details>
+				<details class="danger-zone"><summary>{ v.T("delete") }</summary><p class="hint">{ fmt.Sprintf(v.T("delete_file_question"), entry.Name) }</p><form class="inline" action={ "/sites/" + v.Site.ID + "/file-delete" } method="post"><input type="hidden" name="csrf" value={ v.CSRF }/><input type="hidden" name="path" value={ entry.Path }/><button class="danger">@icon("trash")<span class="button-label">{ v.T("confirm_delete") }</span></button></form></details>
 			}
 		</td></tr>
 	}
@@ -366,5 +438,5 @@ templ filesPage(v filesView) {
 		<tr><td colspan="4">{ v.T("directory_empty") }</td></tr>
 	}
 	</tbody></table></div></section>
-	<div class="file-tools"><section><h2>{ v.T("upload_file") }</h2><form action={ "/sites/" + v.Site.ID + "/upload" } method="post" enctype="multipart/form-data"><input type="hidden" name="csrf" value={ v.CSRF }/><input type="hidden" name="path" value={ v.CurrentPath }/><label>{ v.T("select_file") }<input type="file" name="file" required/></label><button>↑ { v.T("upload_max") }</button></form></section><section><h2>{ v.T("create_directory") }</h2><form action={ "/sites/" + v.Site.ID + "/mkdir" } method="post"><input type="hidden" name="csrf" value={ v.CSRF }/><input type="hidden" name="path" value={ v.CurrentPath }/><label>{ v.T("directory_name") }<input name="name" required maxlength="120" placeholder="directory-name"/></label><button>＋ { v.T("create") }</button></form></section></div><p class="hint">{ v.T("file_access_hint") }</p></div></div></body></html>
+	<div class="file-tools"><section><h2>{ v.T("upload_file") }</h2><form action={ "/sites/" + v.Site.ID + "/upload" } method="post" enctype="multipart/form-data"><input type="hidden" name="csrf" value={ v.CSRF }/><input type="hidden" name="path" value={ v.CurrentPath }/><label>{ v.T("select_file") }<input type="file" name="file" required/></label><button>@icon("upload")<span class="button-label">{ v.T("upload_max") }</span></button></form></section><section><h2>{ v.T("create_directory") }</h2><form action={ "/sites/" + v.Site.ID + "/mkdir" } method="post"><input type="hidden" name="csrf" value={ v.CSRF }/><input type="hidden" name="path" value={ v.CurrentPath }/><label>{ v.T("directory_name") }<input name="name" required maxlength="120" placeholder="directory-name"/></label><button>@icon("folder-plus")<span class="button-label">{ v.T("create") }</span></button></form></section></div><p class="hint">{ v.T("file_access_hint") }</p></div></div></body></html>
 }

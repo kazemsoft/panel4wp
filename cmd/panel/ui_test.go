@@ -64,6 +64,11 @@ func TestSidebarHighlightsCurrentPageAndStartsContentAtTop(t *testing.T) {
 			if !strings.Contains(html, activeLink) {
 				t.Fatalf("missing active navigation link %q", activeLink)
 			}
+			for _, required := range []string{`data-sidebar-toggle`, `class="brand-mark"`, `icon-settings`, `/assets/app.js`} {
+				if !strings.Contains(html, required) {
+					t.Errorf("missing shell element %q", required)
+				}
+			}
 			if !strings.Contains(html, `href="https://github.com/kazemsoft/panel4wp"`) || !strings.Contains(html, "Star on GitHub") {
 				t.Fatal("GitHub support callout is missing")
 			}
@@ -131,7 +136,7 @@ func TestBrowserLanguageAssetsAndExplicitSelection(t *testing.T) {
 		t.Fatalf("language cookie missing: %#v", cookies)
 	}
 
-	for _, asset := range []string{"/assets/app.css", "/assets/htmx.min.js"} {
+	for _, asset := range []string{"/assets/app.css", "/assets/app.js", "/assets/htmx.min.js", "/assets/fonts/vazirmatn-arabic-wght-normal.woff2"} {
 		r = httptest.NewRequest(http.MethodGet, asset, nil)
 		w = httptest.NewRecorder()
 		a.ServeHTTP(w, r)

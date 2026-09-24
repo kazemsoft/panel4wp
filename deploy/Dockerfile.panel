@@ -13,6 +13,7 @@ RUN go mod download
 COPY . .
 COPY --from=frontend /src/ui/assets/app.css /src/ui/assets/app.css
 COPY --from=frontend /src/ui/assets/htmx.min.js /src/ui/assets/htmx.min.js
+COPY --from=frontend /src/ui/assets/fonts/vazirmatn-arabic-wght-normal.woff2 /src/ui/assets/fonts/vazirmatn-arabic-wght-normal.woff2
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/panel ./cmd/panel
 
 FROM alpine:3.22
