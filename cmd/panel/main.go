@@ -657,7 +657,7 @@ func (a *app) siteAction(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if action == "upload" || action == "download" || action == "mkdir" || action == "file-delete" {
+	if action == "upload" || action == "download" || action == "mkdir" || action == "file-delete" || action == "file-move" {
 		a.fileAction(w, r, site, action)
 		return
 	}
@@ -1214,6 +1214,24 @@ func (a *app) fileAction(w http.ResponseWriter, r *http.Request, site core.Site,
 	if action == "file-delete" {
 		if err := a.callWorker("/files/delete", core.FileRequest{SiteID: site.ID, Path: target}, nil); err != nil {
 			a.renderFiles(w, r, site, directory, "", "Delete failed: "+err.Error())
+			return
+		}
+		a.redirectFiles(w, r, site.ID, directory)
+		return
+	}
+	if action == "file-move" {
+		destinationDirectory := strings.Trim(strings.TrimSpace(r.FormValue("destination")), "/")
+		if !core.ValidRelativePath(destinationDirectory, true) {
+			http.Error(w, "invalid destination", http.StatusBadRequest)
+			return
+		}
+		destination, err := joinRelative(destinationDirectory, path.Base(target))
+		if err != nil || destination == target {
+			http.Error(w, "invalid destination", http.StatusBadRequest)
+			return
+		}
+		if err := a.callWorker("/files/move", core.FileRequest{SiteID: site.ID, Path: target, Destination: destination}, nil); err != nil {
+			a.renderFiles(w, r, site, directory, "", "Move failed: "+err.Error())
 			return
 		}
 		a.redirectFiles(w, r, site.ID, directory)

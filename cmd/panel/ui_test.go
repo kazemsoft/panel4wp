@@ -123,12 +123,12 @@ func TestLifecycleControlLivesUnderStatusAndLongActionsDisableOnSubmit(t *testin
 
 func TestFileManagerConfirmsDeletionAndPreservesOperations(t *testing.T) {
 	var output bytes.Buffer
-	v := filesView{Site: core.Site{ID: "abc123", Domain: "demo.localhost"}, CSRF: "csrf-test", Entries: []fileEntryView{{FileEntry: core.FileEntry{Name: "test.txt", Type: "file"}, Path: "test.txt"}}}
+	v := filesView{Site: core.Site{ID: "abc123", Domain: "demo.localhost"}, CSRF: "csrf-test", Entries: []fileEntryView{{FileEntry: core.FileEntry{Name: "test.txt", Type: "file"}, Path: "test.txt"}, {FileEntry: core.FileEntry{Name: "uploads", Type: "directory"}, Path: "uploads"}}}
 	v.Language, v.Direction = "en", "ltr"
 	if err := filesPage(v).Render(context.Background(), &output); err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{`action="/sites/abc123/download"`, `action="/sites/abc123/file-delete"`, `action="/sites/abc123/upload"`, `action="/sites/abc123/mkdir"`, `Confirm delete`, `value="csrf-test"`} {
+	for _, required := range []string{`class="file-toolbar"`, `data-file-row`, `data-file-path="test.txt"`, `data-file-open="/sites/abc123/files?path=uploads"`, `data-file-context-menu`, `id="file-upload-modal"`, `id="folder-create-modal"`, `id="file-move-modal"`, `id="file-delete-modal"`, `action="/sites/abc123/download"`, `action="/sites/abc123/file-move"`, `action="/sites/abc123/file-delete"`, `action="/sites/abc123/upload"`, `action="/sites/abc123/mkdir"`, `data-selection-action`, `value="csrf-test"`} {
 		if !strings.Contains(output.String(), required) {
 			t.Errorf("missing UI element %s", required)
 		}
@@ -189,7 +189,7 @@ func TestBrowserLanguageAssetsAndExplicitSelection(t *testing.T) {
 			t.Errorf("asset %s failed: %d", asset, w.Code)
 		}
 		if asset == "/assets/app.js" {
-			for _, behavior := range []string{"data-modal-open", "data-confirm-domain", "navigator.clipboard.writeText"} {
+			for _, behavior := range []string{"data-modal-open", "data-confirm-domain", "navigator.clipboard.writeText", "data-file-row", "contextmenu", "data-file-download-form"} {
 				if !strings.Contains(w.Body.String(), behavior) {
 					t.Errorf("modal behavior %q is missing", behavior)
 				}

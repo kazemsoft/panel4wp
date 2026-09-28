@@ -73,6 +73,30 @@
 .confirmation-domain{user-select:all;color:var(--ink)}
 .copy-domain{padding:5px 8px;font-size:11px}.copy-domain .icon{width:15px;height:15px}
 .dialog-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:20px}
+[hidden]{display:none!important}
+.file-manager{padding:0;overflow:hidden}
+.file-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:14px 18px;border-bottom:1px solid var(--line);background:#fbfcff}
+.file-toolbar button{font-size:12px;padding:7px 11px}
+.file-location{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 18px;border-bottom:1px solid var(--line)}
+.file-location .path{margin:0;min-width:0;flex:1}
+.file-location .button{font-size:12px;padding:7px 11px;white-space:nowrap}
+.file-table{min-width:650px}
+.file-table th:first-child{width:45%}
+.file-table tbody tr[data-file-row]{cursor:default;outline:none;transition:background .12s,box-shadow .12s}
+.file-table tbody tr[data-file-row]:hover{background:#f7f9fe}
+.file-table tbody tr[data-file-row].selected,.file-table tbody tr[data-file-row]:focus{background:#edf2ff;box-shadow:inset 3px 0 var(--primary)}
+[dir="rtl"] .file-table tbody tr[data-file-row].selected,[dir="rtl"] .file-table tbody tr[data-file-row]:focus{box-shadow:inset -3px 0 var(--primary)}
+.file-entry{display:inline-flex;align-items:center;gap:10px;color:var(--ink);font-weight:600}
+.file-entry .icon{width:20px;height:20px;color:#7c879b}
+.file-entry-directory .icon{color:#e6a437;fill:#fff3d5}
+.file-manager-hint{padding:12px 18px;margin:0;border-top:1px solid var(--line);background:#fbfcff}
+.file-context-menu{position:fixed;z-index:1000;min-width:190px;padding:6px;background:#fff;border:1px solid var(--line);border-radius:11px;box-shadow:0 16px 45px #18233c2e}
+.file-context-menu button{display:flex;width:100%;justify-content:flex-start;padding:9px 11px;border:0;border-radius:7px;background:transparent;color:var(--ink);font-size:12px}
+.file-context-menu button:hover{background:var(--soft);color:var(--primary)}
+.file-context-menu button.danger{color:var(--danger)}
+.file-context-menu button .icon{width:17px;height:17px}
+.file-dialog form{padding-top:4px}
+.file-dialog .selected-file{margin:16px 0 0;padding:9px 11px;border-radius:8px;background:#f7f9fc;font:600 12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}
 
 .sidebar-collapsed .shell{grid-template-columns:88px minmax(0,1fr)}
 .sidebar-collapsed .sidebar{padding-inline:16px}
@@ -107,4 +131,6 @@
   .sidebar-collapsed .sidebar-footer form button{width:auto}
   .sidebar-collapsed .sidebar-footer form button .button-label{display:inline}
   .schedule-grid,.schedule-status{grid-template-columns:1fr}
+  .file-toolbar{padding:11px 12px}.file-toolbar .button-label{display:none}.file-toolbar button{padding:8px}
+  .file-location{align-items:stretch;flex-direction:column}.file-location .button{align-self:flex-start}
 }

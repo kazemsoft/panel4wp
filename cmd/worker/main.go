@@ -222,6 +222,8 @@ const makeDirPHP = `$root=realpath("/var/www/html/wp-content");$target=$root."/"
 
 const deleteFilePHP = `$root=realpath("/var/www/html/wp-content");$p=realpath($root."/".$argv[1]);if($root===false||$p===false||!str_starts_with($p,$root."/")||is_link($p)){fwrite(STDERR,"invalid path");exit(3);}$ok=is_dir($p)?rmdir($p):unlink($p);if(!$ok){fwrite(STDERR,"delete failed; directories must be empty");exit(5);}`
 
+const moveFilePHP = `$root=realpath("/var/www/html/wp-content");$source=realpath($root."/".$argv[1]);$target=$root."/".$argv[2];$parent=realpath(dirname($target));if($root===false||$source===false||!str_starts_with($source,$root."/")||is_link($source)||$parent===false||($parent!==$root&&!str_starts_with($parent,$root."/"))||file_exists($target)){fwrite(STDERR,"invalid move");exit(3);}if(!rename($source,$target)){fwrite(STDERR,"move failed");exit(5);}`
+
 func (w *worker) siteDir(id string) string { return filepath.Join(w.root, id) }
 
 func (w *worker) backupDir(siteID, backupID string) string {
@@ -713,6 +715,16 @@ func (w *worker) fileAction(ctx context.Context, req core.FileRequest, action st
 	return w.docker.Run(ctx, "exec", "wph-wp-"+req.SiteID, "php", "-d", "display_errors=stderr", "-r", script, req.Path)
 }
 
+func (w *worker) moveFile(ctx context.Context, req core.FileRequest) error {
+	if err := w.validateFileRequest(req, false); err != nil {
+		return err
+	}
+	if !core.ValidRelativePath(req.Destination, false) || req.Destination == req.Path {
+		return errors.New("invalid move destination")
+	}
+	return w.docker.Run(ctx, "exec", "wph-wp-"+req.SiteID, "php", "-d", "display_errors=stderr", "-r", moveFilePHP, req.Path, req.Destination)
+}
+
 func (w *worker) restore(ctx context.Context, req core.RestoreRequest) error {
 	if err := core.ValidateSite(req.Site); err != nil {
 		return err
@@ -954,7 +966,7 @@ func (w *worker) ServeHTTP(resp http.ResponseWriter, req *http.Request) {
 			return
 		}
 		err = w.deleteBackup(body)
-	} else if req.URL.Path == "/files/list" || req.URL.Path == "/files/read" || req.URL.Path == "/files/write" || req.URL.Path == "/files/delete" || req.URL.Path == "/files/mkdir" {
+	} else if req.URL.Path == "/files/list" || req.URL.Path == "/files/read" || req.URL.Path == "/files/write" || req.URL.Path == "/files/delete" || req.URL.Path == "/files/mkdir" || req.URL.Path == "/files/move" {
 		var body core.FileRequest
 		if decodeErr := json.NewDecoder(req.Body).Decode(&body); decodeErr != nil {
 			http.Error(resp, "invalid request", http.StatusBadRequest)
@@ -971,6 +983,8 @@ func (w *worker) ServeHTTP(resp http.ResponseWriter, req *http.Request) {
 			err = w.fileAction(ctx, body, "delete")
 		case "/files/mkdir":
 			err = w.fileAction(ctx, body, "mkdir")
+		case "/files/move":
+			err = w.moveFile(ctx, body)
 		}
 	} else {
 		http.NotFound(resp, req)

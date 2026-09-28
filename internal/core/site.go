@@ -85,9 +85,10 @@ type UpdateRequest struct {
 }
 
 type FileRequest struct {
-	SiteID  string `json:"site_id"`
-	Path    string `json:"path"`
-	Content []byte `json:"content,omitempty"`
+	SiteID      string `json:"site_id"`
+	Path        string `json:"path"`
+	Destination string `json:"destination,omitempty"`
+	Content     []byte `json:"content,omitempty"`
 }
 
 type FileEntry struct {

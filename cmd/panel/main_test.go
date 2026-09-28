@@ -44,6 +44,40 @@ func TestMultipartCSRF(t *testing.T) {
 	}
 }
 
+func TestMoveFileBuildsSafeDestination(t *testing.T) {
+	var received core.FileRequest
+	workerCalls := 0
+	worker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		workerCalls++
+		if r.URL.Path != "/files/move" {
+			t.Fatalf("unexpected worker path %q", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Fatal(err)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer worker.Close()
+	a := &app{workerURL: worker.URL, workerToken: strings.Repeat("t", 64), client: worker.Client()}
+	site := core.Site{ID: "0123456789abcdef", Status: core.StatusRunning}
+
+	req := httptest.NewRequest(http.MethodPost, "/sites/"+site.ID+"/file-move", strings.NewReader(url.Values{"path": {"images/logo.png"}, "destination": {"archive/2026"}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp := httptest.NewRecorder()
+	a.fileAction(resp, req, site, "file-move")
+	if resp.Code != http.StatusSeeOther || received.Path != "images/logo.png" || received.Destination != "archive/2026/logo.png" {
+		t.Fatalf("move failed: status=%d request=%#v", resp.Code, received)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/sites/"+site.ID+"/file-move", strings.NewReader(url.Values{"path": {"images/logo.png"}, "destination": {"../escape"}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp = httptest.NewRecorder()
+	a.fileAction(resp, req, site, "file-move")
+	if resp.Code != http.StatusBadRequest || workerCalls != 1 {
+		t.Fatalf("unsafe move was not rejected: status=%d calls=%d", resp.Code, workerCalls)
+	}
+}
+
 func TestDatabaseProxyRequiresPanelAuthentication(t *testing.T) {
 	a := &app{sessionKey: []byte(strings.Repeat("s", 64))}
 	req := httptest.NewRequest(http.MethodGet, "/sites/0123456789abcdef/database/", nil)

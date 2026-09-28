@@ -75,6 +75,10 @@ templ icon(name string) {
 				<path d="M6 6l12 12"></path><path d="M18 6 6 18"></path>
 			case "copy":
 				<rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path>
+			case "move":
+				<path d="M12 3v18"></path><path d="m8 7 4-4 4 4"></path><path d="m8 17 4 4 4-4"></path><path d="M3 12h18"></path><path d="m7 8-4 4 4 4"></path><path d="m17 8 4 4-4 4"></path>
+			case "open":
+				<path d="M5 12h14"></path><path d="m13 6 6 6-6 6"></path>
 			case "file":
 				<path d="M6 2h8l4 4v16H6z"></path><path d="M14 2v5h5"></path>
 			case "link":
@@ -461,43 +465,79 @@ templ future(title, help string) { <div class="future">{ title }<span>{ help }</
 
 templ filesPage(v filesView) {
 	<!doctype html><html lang={ v.Language } dir={ v.Direction }>
-	<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>panel4wp · { v.T("file_manager") }</title><link rel="stylesheet" href="/assets/app.css?v=7"/><script src="/assets/htmx.min.js?v=7" defer></script><script src="/assets/app.js?v=7" defer></script></head>
+	<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>panel4wp · { v.T("file_manager") }</title><link rel="stylesheet" href="/assets/app.css?v=8"/><script src="/assets/htmx.min.js?v=8" defer></script><script src="/assets/app.js?v=8" defer></script></head>
 	<body><div class="shell">@sidebar(v.Language, v.PagePath, v.Languages, v.T, v.CSRF, "files")
 	<div class="workspace"><header class="file-topbar"><a class="icon-link" href={ templ.URL("/sites/" + v.Site.ID) }>@icon("arrow-left")<span>{ v.T("back_to_site") }</span></a><div class="eyebrow file-eyebrow">{ v.T("site_workspace") }</div><h1>{ v.T("file_manager") }</h1><p class="muted">{ v.Site.Domain } · wp-content</p></header>@alerts(v.Error, v.Message)
-	<section><p class="path">{ v.T("path") }: <code>/wp-content
-		if v.CurrentPath != "" {
-			/{ v.CurrentPath }
-		}
-	</code></p>
-	if v.HasParent {
-		<p><a class="icon-link" href={ templ.URL("/sites/" + v.Site.ID + "/files?path=" + url.QueryEscape(v.Parent)) }>@icon("arrow-up")<span>{ v.T("parent_directory") }</span></a></p>
-	}
-	<div class="table-wrap"><table><thead><tr><th>{ v.T("name") }</th><th>{ v.T("size") }</th><th>{ v.T("modified") }</th><th>{ v.T("actions") }</th></tr></thead><tbody>
-	for _, entry := range v.Entries {
-		<tr><td>
-			if entry.Type == "directory" {
-				<a class="icon-link" href={ templ.URL("/sites/" + v.Site.ID + "/files?path=" + url.QueryEscape(entry.Path)) }>@icon("files")<span>{ entry.Name }</span></a>
-			} else if entry.Type == "file" {
-				<span class="icon-link">@icon("file")<span>{ entry.Name }</span></span>
-			} else {
-				<span class="icon-link">@icon("link")<span>{ entry.Name }</span></span>
+		<section class="file-manager">
+			<div class="file-toolbar">
+				<button type="button" data-modal-open="file-upload-modal">@icon("upload")<span class="button-label">{ v.T("upload_file") }</span></button>
+				<button class="secondary" type="button" data-modal-open="folder-create-modal">@icon("folder-plus")<span class="button-label">{ v.T("create_directory") }</span></button>
+				<form class="inline" action={ "/sites/" + v.Site.ID + "/download" } method="post" data-file-download-form><input type="hidden" name="csrf" value={ v.CSRF }/><input type="hidden" name="path" data-selected-path/><button class="secondary" disabled data-selection-action data-requires-file>@icon("download")<span class="button-label">{ v.T("download") }</span></button></form>
+				<button class="secondary" type="button" disabled data-selection-action data-requires-mutable data-modal-open="file-move-modal">@icon("move")<span class="button-label">{ v.T("move") }</span></button>
+				<button class="danger" type="button" disabled data-selection-action data-requires-mutable data-modal-open="file-delete-modal">@icon("trash")<span class="button-label">{ v.T("delete") }</span></button>
+			</div>
+			<div class="file-location"><div class="path">{ v.T("path") }: <code>/wp-content
+				if v.CurrentPath != "" {
+					/{ v.CurrentPath }
+				}
+			</code></div>
+			if v.HasParent {
+				<a class="button secondary" href={ templ.URL("/sites/" + v.Site.ID + "/files?path=" + url.QueryEscape(v.Parent)) }>@icon("arrow-up")<span class="button-label">{ v.T("parent_directory") }</span></a>
 			}
-		</td><td>
-			if entry.Type == "file" {
-				{ fmt.Sprintf("%d bytes", entry.Size) }
+			</div>
+			<div class="table-wrap"><table class="file-table"><thead><tr><th>{ v.T("name") }</th><th>{ v.T("size") }</th><th>{ v.T("modified") }</th><th>{ v.T("type") }</th></tr></thead><tbody>
+			for _, entry := range v.Entries {
+				<tr tabindex="0" aria-selected="false" data-file-row data-file-path={ entry.Path } data-file-name={ entry.Name } data-file-type={ entry.Type }
+					if entry.Type == "directory" {
+						data-file-open={ "/sites/" + v.Site.ID + "/files?path=" + url.QueryEscape(entry.Path) }
+					}
+				><td><span class={ "file-entry file-entry-" + entry.Type }>
+					if entry.Type == "directory" {
+						@icon("files")
+					} else if entry.Type == "file" {
+						@icon("file")
+					} else {
+						@icon("link")
+					}
+					<span>{ entry.Name }</span></span></td><td>
+					if entry.Type == "file" {
+						{ formatBytes(entry.Size) }
+					} else {
+						—
+					}
+				</td><td>{ formatUnixTime(entry.Modified) }</td><td>{ entry.Type }</td></tr>
 			}
-		</td><td>{ formatUnixTime(entry.Modified) }</td><td>
-			if entry.Type == "file" {
-				<form class="inline" action={ "/sites/" + v.Site.ID + "/download" } method="post"><input type="hidden" name="csrf" value={ v.CSRF }/><input type="hidden" name="path" value={ entry.Path }/><button>@icon("download")<span class="button-label">{ v.T("download") }</span></button></form>
+			if len(v.Entries) == 0 {
+				<tr><td colspan="4">{ v.T("directory_empty") }</td></tr>
 			}
-			if entry.Type != "link" {
-				<details class="danger-zone"><summary>{ v.T("delete") }</summary><p class="hint">{ fmt.Sprintf(v.T("delete_file_question"), entry.Name) }</p><form class="inline" action={ "/sites/" + v.Site.ID + "/file-delete" } method="post"><input type="hidden" name="csrf" value={ v.CSRF }/><input type="hidden" name="path" value={ entry.Path }/><button class="danger">@icon("trash")<span class="button-label">{ v.T("confirm_delete") }</span></button></form></details>
-			}
-		</td></tr>
-	}
-	if len(v.Entries) == 0 {
-		<tr><td colspan="4">{ v.T("directory_empty") }</td></tr>
-	}
-	</tbody></table></div></section>
-	<div class="file-tools"><section><h2>{ v.T("upload_file") }</h2><form action={ "/sites/" + v.Site.ID + "/upload" } method="post" enctype="multipart/form-data"><input type="hidden" name="csrf" value={ v.CSRF }/><input type="hidden" name="path" value={ v.CurrentPath }/><label>{ v.T("select_file") }<input type="file" name="file" required/></label><button>@icon("upload")<span class="button-label">{ v.T("upload_max") }</span></button></form></section><section><h2>{ v.T("create_directory") }</h2><form action={ "/sites/" + v.Site.ID + "/mkdir" } method="post"><input type="hidden" name="csrf" value={ v.CSRF }/><input type="hidden" name="path" value={ v.CurrentPath }/><label>{ v.T("directory_name") }<input name="name" required maxlength="120" placeholder="directory-name"/></label><button>@icon("folder-plus")<span class="button-label">{ v.T("create") }</span></button></form></section></div><p class="hint">{ v.T("file_access_hint") }</p></div></div></body></html>
+			</tbody></table></div>
+			<p class="hint file-manager-hint">{ v.T("file_access_hint") }</p>
+		</section>
+		@fileContextMenu(v)
+		@fileManagerDialogs(v)
+	</div></div></body></html>
+}
+
+templ fileContextMenu(v filesView) {
+	<div class="file-context-menu" role="menu" hidden data-file-context-menu>
+		<button type="button" role="menuitem" data-context-open>@icon("open")<span>{ v.T("open") }</span></button>
+		<button type="button" role="menuitem" data-context-download>@icon("download")<span>{ v.T("download") }</span></button>
+		<button type="button" role="menuitem" data-context-mutable data-modal-open="file-move-modal">@icon("move")<span>{ v.T("move") }</span></button>
+		<button class="danger" type="button" role="menuitem" data-context-mutable data-modal-open="file-delete-modal">@icon("trash")<span>{ v.T("delete") }</span></button>
+	</div>
+}
+
+templ fileManagerDialogs(v filesView) {
+	<dialog id="file-upload-modal" class="confirm-dialog file-dialog" aria-labelledby="file-upload-title"><div class="dialog-header"><div class="dialog-title">@icon("upload")<h3 id="file-upload-title">{ v.T("upload_file") }</h3></div><button class="secondary icon-button" type="button" data-modal-close aria-label={ v.T("cancel") }>@icon("close")</button></div>
+		<form action={ "/sites/" + v.Site.ID + "/upload" } method="post" enctype="multipart/form-data" data-disable-on-submit data-progress-label={ v.T("in_progress") }><input type="hidden" name="csrf" value={ v.CSRF }/><input type="hidden" name="path" value={ v.CurrentPath }/><label>{ v.T("select_file") }<input type="file" name="file" required/></label><div class="dialog-actions"><button class="secondary" type="button" data-modal-close>{ v.T("cancel") }</button><button type="submit">@icon("upload")<span class="button-label">{ v.T("upload_max") }</span></button></div></form>
+	</dialog>
+	<dialog id="folder-create-modal" class="confirm-dialog file-dialog" aria-labelledby="folder-create-title"><div class="dialog-header"><div class="dialog-title">@icon("folder-plus")<h3 id="folder-create-title">{ v.T("create_directory") }</h3></div><button class="secondary icon-button" type="button" data-modal-close aria-label={ v.T("cancel") }>@icon("close")</button></div>
+		<form action={ "/sites/" + v.Site.ID + "/mkdir" } method="post" data-disable-on-submit data-progress-label={ v.T("in_progress") }><input type="hidden" name="csrf" value={ v.CSRF }/><input type="hidden" name="path" value={ v.CurrentPath }/><label>{ v.T("directory_name") }<input name="name" required maxlength="120" placeholder="directory-name"/></label><div class="dialog-actions"><button class="secondary" type="button" data-modal-close>{ v.T("cancel") }</button><button type="submit">@icon("folder-plus")<span class="button-label">{ v.T("create") }</span></button></div></form>
+	</dialog>
+	<dialog id="file-move-modal" class="confirm-dialog file-dialog" aria-labelledby="file-move-title"><div class="dialog-header"><div class="dialog-title">@icon("move")<h3 id="file-move-title">{ v.T("move") }</h3></div><button class="secondary icon-button" type="button" data-modal-close aria-label={ v.T("cancel") }>@icon("close")</button></div>
+		<form action={ "/sites/" + v.Site.ID + "/file-move" } method="post" data-disable-on-submit data-progress-label={ v.T("in_progress") }><input type="hidden" name="csrf" value={ v.CSRF }/><input type="hidden" name="path" data-selected-path/><p class="selected-file" data-selected-name></p><label>{ v.T("destination_folder") }<input name="destination" autocomplete="off" placeholder="uploads/2026"/></label><p class="hint">{ v.T("move_file_hint") }</p><div class="dialog-actions"><button class="secondary" type="button" data-modal-close>{ v.T("cancel") }</button><button type="submit">@icon("move")<span class="button-label">{ v.T("move") }</span></button></div></form>
+	</dialog>
+	<dialog id="file-delete-modal" class="confirm-dialog file-dialog" aria-labelledby="file-delete-title"><div class="dialog-header"><div class="dialog-title">@icon("trash")<h3 id="file-delete-title">{ v.T("confirm_delete") }</h3></div><button class="secondary icon-button" type="button" data-modal-close aria-label={ v.T("cancel") }>@icon("close")</button></div>
+		<p class="dialog-warning" data-delete-question-template={ v.T("delete_file_question") } data-delete-question></p><form action={ "/sites/" + v.Site.ID + "/file-delete" } method="post" data-disable-on-submit data-progress-label={ v.T("in_progress") }><input type="hidden" name="csrf" value={ v.CSRF }/><input type="hidden" name="path" data-selected-path/><div class="dialog-actions"><button class="secondary" type="button" data-modal-close>{ v.T("cancel") }</button><button class="danger" type="submit">@icon("trash")<span class="button-label">{ v.T("confirm_delete") }</span></button></div></form>
+	</dialog>
 }

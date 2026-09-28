@@ -67,6 +67,98 @@ document.addEventListener("DOMContentLoaded", () => {
     syncConfirmation();
   });
 
+  const fileRows = [...document.querySelectorAll("[data-file-row]")];
+  const fileContextMenu = document.querySelector("[data-file-context-menu]");
+  const fileDownloadForm = document.querySelector("[data-file-download-form]");
+  let selectedFileRow = null;
+
+  const closeFileContextMenu = () => {
+    if (fileContextMenu) fileContextMenu.hidden = true;
+  };
+
+  const selectFileRow = (row) => {
+    if (!row) return;
+    fileRows.forEach((candidate) => {
+      const selected = candidate === row;
+      candidate.classList.toggle("selected", selected);
+      candidate.setAttribute("aria-selected", String(selected));
+    });
+    selectedFileRow = row;
+    document.querySelectorAll("[data-selected-path]").forEach((input) => {
+      input.value = row.dataset.filePath;
+    });
+    document.querySelectorAll("[data-selected-name]").forEach((element) => {
+      element.textContent = row.dataset.fileName;
+    });
+    const deleteQuestion = document.querySelector("[data-delete-question]");
+    if (deleteQuestion) {
+      deleteQuestion.textContent = deleteQuestion.dataset.deleteQuestionTemplate.replace(
+        "%s",
+        row.dataset.fileName,
+      );
+    }
+    document.querySelectorAll("[data-selection-action]").forEach((button) => {
+      const fileOnly = button.hasAttribute("data-requires-file");
+      const mutableOnly = button.hasAttribute("data-requires-mutable");
+      button.disabled =
+        (fileOnly && row.dataset.fileType !== "file") ||
+        (mutableOnly && row.dataset.fileType === "link");
+    });
+  };
+
+  const openFileContextMenu = (row, x, y) => {
+    if (!fileContextMenu) return;
+    selectFileRow(row);
+    const canOpen = Boolean(row.dataset.fileOpen);
+    const isFile = row.dataset.fileType === "file";
+    const isMutable = row.dataset.fileType !== "link";
+    fileContextMenu.querySelector("[data-context-open]").hidden = !canOpen;
+    fileContextMenu.querySelector("[data-context-download]").hidden = !isFile;
+    fileContextMenu.querySelectorAll("[data-context-mutable]").forEach((item) => {
+      item.hidden = !isMutable;
+    });
+    fileContextMenu.hidden = false;
+    const bounds = fileContextMenu.getBoundingClientRect();
+    fileContextMenu.style.left = `${Math.min(x, window.innerWidth - bounds.width - 8)}px`;
+    fileContextMenu.style.top = `${Math.min(y, window.innerHeight - bounds.height - 8)}px`;
+  };
+
+  fileRows.forEach((row) => {
+    row.addEventListener("click", () => selectFileRow(row));
+    row.addEventListener("dblclick", () => {
+      if (row.dataset.fileOpen) window.location.assign(row.dataset.fileOpen);
+    });
+    row.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      openFileContextMenu(row, event.clientX, event.clientY);
+    });
+    row.addEventListener("keydown", (event) => {
+      if (event.key === " " || event.key === "Spacebar") {
+        event.preventDefault();
+        selectFileRow(row);
+      } else if (event.key === "Enter" && row.dataset.fileOpen) {
+        window.location.assign(row.dataset.fileOpen);
+      } else if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+        event.preventDefault();
+        const bounds = row.getBoundingClientRect();
+        openFileContextMenu(row, bounds.left + 24, bounds.top + 24);
+      }
+    });
+  });
+
+  fileContextMenu?.querySelector("[data-context-open]")?.addEventListener("click", () => {
+    if (selectedFileRow?.dataset.fileOpen) window.location.assign(selectedFileRow.dataset.fileOpen);
+  });
+  fileContextMenu?.querySelector("[data-context-download]")?.addEventListener("click", () => {
+    fileDownloadForm?.requestSubmit();
+  });
+  document.addEventListener("click", (event) => {
+    if (!fileContextMenu?.contains(event.target)) closeFileContextMenu();
+  });
+  window.addEventListener("blur", closeFileContextMenu);
+  window.addEventListener("resize", closeFileContextMenu);
+  window.addEventListener("scroll", closeFileContextMenu, true);
+
   const toggle = document.querySelector("[data-sidebar-toggle]");
   if (!toggle) return;
 

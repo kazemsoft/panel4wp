@@ -317,6 +317,33 @@ func TestFileRequestsRejectTraversalBeforeDocker(t *testing.T) {
 	}
 }
 
+func TestMoveFileValidatesBothPathsBeforeDocker(t *testing.T) {
+	base := t.TempDir()
+	f := &fakeDocker{}
+	w := &worker{root: filepath.Join(base, "sites"), docker: f}
+	id := "0123456789abcdef"
+	if err := os.MkdirAll(w.siteDir(id), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(w.siteDir(id), "compose.yaml"), []byte("services: {}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.moveFile(context.Background(), core.FileRequest{SiteID: id, Path: "old/file.txt", Destination: "new/file.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.calls) != 1 || f.calls[0][len(f.calls[0])-2] != "old/file.txt" || f.calls[0][len(f.calls[0])-1] != "new/file.txt" {
+		t.Fatalf("unexpected move command: %#v", f.calls)
+	}
+	for _, destination := range []string{"", "../escape/file.txt", "old/file.txt"} {
+		if err := w.moveFile(context.Background(), core.FileRequest{SiteID: id, Path: "old/file.txt", Destination: destination}); err == nil {
+			t.Errorf("unsafe destination %q accepted", destination)
+		}
+	}
+	if len(f.calls) != 1 {
+		t.Fatalf("unsafe move reached Docker: %#v", f.calls)
+	}
+}
+
 func TestMigrateLegacyNetworkConfig(t *testing.T) {
 	base := t.TempDir()
 	f := &fakeDocker{}
