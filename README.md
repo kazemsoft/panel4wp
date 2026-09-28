@@ -2,27 +2,103 @@
 
 An early, self hosted, open source WordPress server panel. A single server administrator can create, start, stop, and remove independent WordPress sites from a browser. Each site gets its own WordPress and MariaDB containers, Docker volumes, credentials, and domain route. Caddy handles HTTPS for public domains.
 
+If panel4wp is useful to you, please [star the project on GitHub](https://github.com/kazemsoft/panel4wp). Stars help other people discover the project. You can also support its development with a cryptocurrency donation:
+
+<a href="https://nowpayments.io/donation?api_key=NB8S1VE-JHAM0P7-GT27HGT-43Q3CNA" target="_blank" rel="noreferrer noopener">
+  <img src="https://nowpayments.io/images/embeds/donation-button-black.svg" alt="Donate cryptocurrency to panel4wp with NOWPayments">
+</a>
+
 **Status: experimental MVP.** Do not use it for paying customers or irreplaceable data yet. SFTP, automated alerting, container image upgrades, hard storage quotas, off-host backups, and customer accounts are planned but not implemented. The current worker has access to the Docker socket and must be treated as a privileged part of the host.
 
-## Requirements
+## Quick installation on Linux or a VM
+
+Use a dedicated Linux machine or VM. Ubuntu 22.04/24.04 or Debian 12 is a simple starting point. The host needs:
 
 - Linux server with Docker Engine and the Compose plugin
-- Ports 80 and 443 available; enough RAM and disk for the number of sites you create
+- Git, ports 80 and 443 available, and enough RAM and disk for the sites you create
 - For a public panel or site, an A/AAAA DNS record pointing to the server and inbound ports 80/443
 
-Docker Desktop on macOS may be used for local development. The installer itself requires Linux.
+Docker Desktop on macOS may be used for development, but the installer itself requires Linux.
 
-## Install
+### 1. Prepare the server
 
-Clone this repository and run from its directory:
+Connect to the machine over SSH. On a fresh Ubuntu or Debian host, install Git and Docker:
 
 ```sh
+sudo apt update
+sudo apt install -y ca-certificates curl git
+curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
+sudo sh /tmp/get-docker.sh
+sudo usermod -aG docker "$USER"
+```
+
+Log out and reconnect after changing the Docker group. For a long-lived production server, use Docker's [distribution-specific installation instructions](https://docs.docker.com/engine/install/) instead of the convenience script.
+
+Verify that Docker and Compose are available:
+
+```sh
+docker --version
+docker compose version
+```
+
+If the server uses UFW, keep SSH accessible and allow web traffic:
+
+```sh
+sudo ufw allow OpenSSH
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+sudo ufw enable
+```
+
+Also open TCP ports 80 and 443 in the VM provider's firewall or security group, when it has one.
+
+### 2. Configure a public domain
+
+Create an A record such as `panel.example.com` pointing to the server's public IPv4 address. Add an AAAA record only when IPv6 is configured on the server. Wait for the record to resolve before installing so Caddy can obtain the HTTPS certificate.
+
+Each WordPress site also needs its own A/AAAA record pointing to this server. The panel configures its route when the site is created.
+
+### 3. Install panel4wp
+
+Clone the repository and run the installer from its directory:
+
+```sh
+git clone https://github.com/kazemsoft/panel4wp.git
+cd panel4wp
 ./install.sh panel.example.com
 ```
 
-The installer builds the panel and worker, writes private secrets to `.env`, starts the services, and prints a randomly generated administrator password once. Save it immediately. The panel is then available at `https://panel.example.com` after DNS resolves and Caddy obtains a certificate.
+Replace `panel.example.com` with the panel domain you configured. The installer:
 
-For a local experiment on a Linux machine, run `./install.sh` without a domain. This uses `http://localhost`. Leave the domain field empty when creating a site to get an `http://<id>.localhost` address on the same machine.
+- creates the local data directories;
+- generates private panel and worker secrets;
+- builds and starts the panel, worker, and Caddy containers;
+- prints the `admin` password once.
+
+Save the generated password immediately. Open `https://panel.example.com` and sign in as `admin`.
+
+### Local installation
+
+To try panel4wp directly on a Linux computer without a public domain, run:
+
+```sh
+git clone https://github.com/kazemsoft/panel4wp.git
+cd panel4wp
+./install.sh
+```
+
+Open `http://localhost`. When creating a test site, leave its domain empty to receive an `http://<id>.localhost` address. These `.localhost` addresses are intended for the same computer that runs the panel.
+
+### Update an installation
+
+From the cloned repository directory:
+
+```sh
+git pull --ff-only
+docker compose up -d --build
+```
+
+The persistent panel, site, backup, and Caddy data stays under `data/`. Back up this directory before server migration or major updates. Never commit `.env` or `data/`.
 
 ## Operation
 
@@ -38,7 +114,7 @@ The same refresh measures the real disk space occupied by each site's WordPress 
 
 The **Back up and update WordPress** action first creates and records a verified safety backup. It then updates WordPress core, runs database migrations, and updates all plugins and themes through the site's isolated WP-CLI service. The safety backup remains available for an in-place restore if an extension update causes a regression.
 
-Each running site has a browser file manager restricted to its `wp-content` directory. It can browse directories, upload and download files up to 10 MB, create directories, delete files, and remove empty directories. It refuses unsafe relative paths and does not allow operations on symbolic links.
+Each running site has a browser file manager restricted to its `wp-content` directory. It can browse directories, upload and download files up to 10 MB, create directories, move entries, delete files, and remove empty directories. Rows can be selected from the table or opened through a context menu. It refuses unsafe relative paths and does not allow operations on symbolic links.
 
 Each running site also has an on-demand phpMyAdmin database manager. It uses the site's restricted WordPress database account, is reachable only through the authenticated panel, publishes no host port, and is automatically removed after 15 minutes. Opening it again starts a fresh 15-minute session. The proxy removes panel session cookies before forwarding requests to phpMyAdmin.
 
@@ -49,12 +125,6 @@ Recent administrator operations are written to a private, size-limited JSON Line
 The panel is available in English, Arabic, Persian, Spanish, German, French, Chinese, and Japanese. On the first visit it follows the browser's preferred supported language and falls back to English. The language selector is visible on both the login screen and the authenticated sidebar; an explicit choice is saved in a one-year cookie. Arabic and Persian render right-to-left.
 
 Deleting a site removes its containers, Docker volumes, local backups, and all credentials. Enter the exact domain to confirm. Copy important backups to separate storage because local backups are lost with the server or disk.
-
-Update the panel from its repository directory with:
-
-```sh
-docker compose up -d --build
-```
 
 ## Design
 
