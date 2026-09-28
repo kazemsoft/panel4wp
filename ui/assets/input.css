@@ -48,6 +48,31 @@
 .schedule-status span{display:flex;flex-direction:column;padding:10px 12px;border:1px solid var(--line);border-radius:9px;background:#fff;color:var(--muted);font-size:12px}
 .schedule-status strong{color:var(--ink);font-size:11px;margin-bottom:2px}
 .schedule-error{margin-top:14px;margin-bottom:0}
+.backup-list{padding:0;margin-top:16px;overflow:hidden}
+.backup-list-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;padding:20px 22px 14px}
+.backup-list-head h3{margin:0 0 4px}
+.backup-list-head p{margin:0}
+.backup-table{min-width:680px}
+.backup-table th:first-child{width:180px}
+.backup-table th:nth-child(3){width:130px}
+.backup-table th:last-child{width:110px}
+.backup-table td:first-child{white-space:nowrap}
+.backup-table tr:last-child td{border-bottom:0}
+.backup-row-actions{display:flex;align-items:center;gap:7px}
+.icon-button{width:36px;height:36px;padding:0}
+.confirm-dialog{position:fixed;inset:50% auto auto 50%;width:min(520px,calc(100vw - 32px));max-height:calc(100vh - 32px);margin:0;transform:translate(-50%,-50%);border:0;border-radius:16px;padding:0;color:var(--ink);background:#fff;box-shadow:0 24px 80px #15213a38}
+.confirm-dialog::backdrop{background:#17203380;backdrop-filter:blur(2px)}
+.confirm-dialog[open]{animation:dialog-in .16s ease-out}
+@keyframes dialog-in{from{opacity:0;transform:translate(-50%,calc(-50% + 8px)) scale(.98)}to{opacity:1;transform:translate(-50%,-50%)}}
+.dialog-header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:20px 22px;border-bottom:1px solid var(--line)}
+.dialog-title{display:flex;align-items:center;gap:10px}.dialog-title h3{margin:0}.dialog-title>.icon{color:var(--danger)}
+.dialog-warning{margin:0;padding:18px 22px 0;color:#657188;font-size:13px}
+.confirm-dialog form{padding:0 22px 22px}
+.confirm-dialog label{margin-bottom:8px}
+.domain-copy{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 11px;border:1px solid var(--line);border-radius:9px;background:#f7f9fc}
+.confirmation-domain{user-select:all;color:var(--ink)}
+.copy-domain{padding:5px 8px;font-size:11px}.copy-domain .icon{width:15px;height:15px}
+.dialog-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:20px}
 
 .sidebar-collapsed .shell{grid-template-columns:88px minmax(0,1fr)}
 .sidebar-collapsed .sidebar{padding-inline:16px}

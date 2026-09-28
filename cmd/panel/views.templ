@@ -71,6 +71,10 @@ templ icon(name string) {
 				<path d="m6 10 6-6 6 6"></path><path d="M12 4v16"></path>
 			case "check":
 				<path d="m5 12 4 4L19 6"></path>
+			case "close":
+				<path d="M6 6l12 12"></path><path d="M18 6 6 18"></path>
+			case "copy":
+				<rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path>
 			case "file":
 				<path d="M6 2h8l4 4v16H6z"></path><path d="M14 2v5h5"></path>
 			case "link":
@@ -122,9 +126,9 @@ templ documentHead(v view) {
 		<meta charset="utf-8"/>
 		<meta name="viewport" content="width=device-width, initial-scale=1"/>
 		<title>panel4wp · { v.T("workspace") }</title>
-		<link rel="stylesheet" href="/assets/app.css?v=5"/>
-		<script src="/assets/htmx.min.js?v=5" defer></script>
-		<script src="/assets/app.js?v=5" defer></script>
+		<link rel="stylesheet" href="/assets/app.css?v=7"/>
+		<script src="/assets/htmx.min.js?v=7" defer></script>
+		<script src="/assets/app.js?v=7" defer></script>
 	</head>
 }
 
@@ -347,14 +351,41 @@ templ actionForm(csrf, action, className, iconName, label, progressLabel string)
 }
 
 templ backupList(v view, site core.Site) {
-	<details open><summary>{ v.T("backups_recovery") } · { fmt.Sprintf("%d %s", len(site.Backups), v.T("available")) }</summary><p class="hint">{ v.T("restore_warning") }</p>
+	<section class="backup-list"><div class="backup-list-head"><div><h3>{ v.T("backups_recovery") }</h3><p class="hint">{ v.T("restore_warning") }</p></div><span class="badge">{ fmt.Sprintf("%d %s", len(site.Backups), v.T("available")) }</span></div>
+		<div class="table-wrap"><table class="backup-table"><thead><tr><th>{ v.T("created_at") }</th><th>ID</th><th>{ v.T("type") }</th><th>{ v.T("actions") }</th></tr></thead><tbody>
 		for _, backup := range site.Backups {
-			<div class="backup-item"><small>{ formatTime(backup.CreatedAt) } · { backup.ID } · <span class="badge">{ v.T(backupSourceKey(backup.Source)) }</span></small>
-			<form action={ "/sites/" + site.ID + "/restore" } method="post"><input type="hidden" name="csrf" value={ v.CSRF }/><input type="hidden" name="backup_id" value={ backup.ID }/><label>{ v.T("type_domain_restore") } <code>{ site.Domain }</code><input name="confirm" required/></label><p><button class="danger">@icon("restore")<span class="button-label">{ v.T("restore_backup") }</span></button></p></form>
-			<form action={ "/sites/" + site.ID + "/backup-delete" } method="post"><input type="hidden" name="csrf" value={ v.CSRF }/><input type="hidden" name="backup_id" value={ backup.ID }/><label>{ v.T("type_domain_delete") } <code>{ site.Domain }</code><input name="confirm" required/></label><p><button class="danger">@icon("trash")<span class="button-label">{ v.T("delete_backup") }</span></button></p></form>
-			</div>
+			<tr><td><time>{ formatTime(backup.CreatedAt) }</time></td><td><code>{ backup.ID }</code></td><td><span class="badge">{ v.T(backupSourceKey(backup.Source)) }</span></td><td><div class="backup-row-actions"><button class="secondary icon-button" type="button" data-modal-open={ "restore-" + backup.ID } aria-label={ v.T("restore_backup") } title={ v.T("restore_backup") }>@icon("restore")</button><button class="danger icon-button" type="button" data-modal-open={ "delete-" + backup.ID } aria-label={ v.T("delete_backup") } title={ v.T("delete_backup") }>@icon("trash")</button></div></td></tr>
 		}
-	</details>
+		</tbody></table></div>
+		for _, backup := range site.Backups {
+			@backupConfirmDialog(v, site, backup, "restore")
+			@backupConfirmDialog(v, site, backup, "delete")
+		}
+	</section>
+}
+
+templ backupConfirmDialog(v view, site core.Site, backup core.Backup, operation string) {
+	{{ isRestore := operation == "restore" }}
+	{{ dialogID := operation + "-" + backup.ID }}
+	{{ action := "/sites/" + site.ID + "/backup-delete" }}
+	{{ title := v.T("delete_backup") }}
+	{{ warning := v.T("delete_backup_warning") }}
+	{{ iconName := "trash" }}
+	if isRestore {
+		{{ action = "/sites/" + site.ID + "/restore" }}
+		{{ title = v.T("restore_backup") }}
+		{{ warning = v.T("restore_warning") }}
+		{{ iconName = "restore" }}
+	}
+	<dialog id={ dialogID } class="confirm-dialog" aria-labelledby={ dialogID + "-title" }>
+		<div class="dialog-header"><div class="dialog-title">@icon(iconName)<h3 id={ dialogID + "-title" }>{ title }</h3></div><button class="secondary icon-button" type="button" data-modal-close aria-label={ v.T("cancel") }>@icon("close")</button></div>
+		<p class="dialog-warning">{ warning }</p>
+		<form action={ action } method="post" data-confirm-domain={ site.Domain } data-disable-on-submit data-progress-label={ v.T("in_progress") }>
+			<input type="hidden" name="csrf" value={ v.CSRF }/><input type="hidden" name="backup_id" value={ backup.ID }/>
+			<label for={ dialogID + "-confirm" }>{ v.T("confirm_domain") }</label><span class="domain-copy"><code class="confirmation-domain">{ site.Domain }</code><button class="secondary copy-domain" type="button" data-copy-text={ site.Domain } title={ v.T("copy") }>@icon("copy")<span>{ v.T("copy") }</span></button></span><input id={ dialogID + "-confirm" } name="confirm" required autocomplete="off" spellcheck="false" data-confirm-input/>
+			<div class="dialog-actions"><button class="secondary" type="button" data-modal-close>{ v.T("cancel") }</button><button class="danger" type="submit" data-confirm-submit disabled>@icon(iconName)<span class="button-label">{ title }</span></button></div>
+		</form>
+	</dialog>
 }
 
 templ siteMail(v view, site core.Site) {
@@ -430,7 +461,7 @@ templ future(title, help string) { <div class="future">{ title }<span>{ help }</
 
 templ filesPage(v filesView) {
 	<!doctype html><html lang={ v.Language } dir={ v.Direction }>
-	<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>panel4wp · { v.T("file_manager") }</title><link rel="stylesheet" href="/assets/app.css?v=5"/><script src="/assets/htmx.min.js?v=5" defer></script><script src="/assets/app.js?v=5" defer></script></head>
+	<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>panel4wp · { v.T("file_manager") }</title><link rel="stylesheet" href="/assets/app.css?v=7"/><script src="/assets/htmx.min.js?v=7" defer></script><script src="/assets/app.js?v=7" defer></script></head>
 	<body><div class="shell">@sidebar(v.Language, v.PagePath, v.Languages, v.T, v.CSRF, "files")
 	<div class="workspace"><header class="file-topbar"><a class="icon-link" href={ templ.URL("/sites/" + v.Site.ID) }>@icon("arrow-left")<span>{ v.T("back_to_site") }</span></a><div class="eyebrow file-eyebrow">{ v.T("site_workspace") }</div><h1>{ v.T("file_manager") }</h1><p class="muted">{ v.Site.Domain } · wp-content</p></header>@alerts(v.Error, v.Message)
 	<section><p class="path">{ v.T("path") }: <code>/wp-content

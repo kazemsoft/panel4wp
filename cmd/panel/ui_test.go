@@ -41,8 +41,13 @@ func TestIndependentPagesPreserveActions(t *testing.T) {
 					t.Error("missing manage link")
 				}
 			} else if pageName == "backups" {
-				if !strings.Contains(html, `<code>demo.localhost</code>`) || strings.Contains(html, "%!(EXTRA") {
-					t.Error("backup confirmation must show the domain without formatting errors")
+				for _, required := range []string{`class="backup-table"`, `data-modal-open="restore-backup123"`, `id="restore-backup123"`, `id="delete-backup123"`, `data-confirm-domain="demo.localhost"`, `class="confirmation-domain">demo.localhost</code>`, `data-copy-text="demo.localhost"`, `data-confirm-submit disabled`} {
+					if !strings.Contains(html, required) {
+						t.Errorf("backup table or confirmation modal is missing %q", required)
+					}
+				}
+				if strings.Contains(html, "%!(EXTRA") {
+					t.Error("backup confirmation contains a formatting error")
 				}
 			}
 		})
@@ -182,6 +187,13 @@ func TestBrowserLanguageAssetsAndExplicitSelection(t *testing.T) {
 		a.ServeHTTP(w, r)
 		if w.Code != http.StatusOK || w.Body.Len() == 0 || w.Header().Get("X-Content-Type-Options") != "nosniff" {
 			t.Errorf("asset %s failed: %d", asset, w.Code)
+		}
+		if asset == "/assets/app.js" {
+			for _, behavior := range []string{"data-modal-open", "data-confirm-domain", "navigator.clipboard.writeText"} {
+				if !strings.Contains(w.Body.String(), behavior) {
+					t.Errorf("modal behavior %q is missing", behavior)
+				}
+			}
 		}
 	}
 }

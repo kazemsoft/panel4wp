@@ -25,6 +25,48 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
 
+  document.querySelectorAll("[data-modal-open]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const dialog = document.getElementById(button.dataset.modalOpen);
+      if (dialog instanceof HTMLDialogElement) dialog.showModal();
+    });
+  });
+
+  document.querySelectorAll("[data-copy-text]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(button.dataset.copyText);
+      } catch (_) {
+        // The domain remains selectable when clipboard access is unavailable.
+      }
+    });
+  });
+
+  document.querySelectorAll("dialog.confirm-dialog").forEach((dialog) => {
+    dialog.querySelectorAll("[data-modal-close]").forEach((button) => {
+      button.addEventListener("click", () => dialog.close());
+    });
+    dialog.addEventListener("click", (event) => {
+      if (event.target === dialog) dialog.close();
+    });
+    dialog.addEventListener("close", () => {
+      dialog.querySelector("form[data-confirm-domain]")?.reset();
+    });
+  });
+
+  document.querySelectorAll("form[data-confirm-domain]").forEach((form) => {
+    const input = form.querySelector("[data-confirm-input]");
+    const submit = form.querySelector("[data-confirm-submit]");
+    if (!input || !submit) return;
+
+    const syncConfirmation = () => {
+      submit.disabled = input.value !== form.dataset.confirmDomain;
+    };
+    input.addEventListener("input", syncConfirmation);
+    form.addEventListener("reset", () => window.setTimeout(syncConfirmation));
+    syncConfirmation();
+  });
+
   const toggle = document.querySelector("[data-sidebar-toggle]");
   if (!toggle) return;
 
