@@ -31,6 +31,12 @@
 .sidebar-toggle .icon-panel-open{display:none}
 .form-submit{margin-top:22px}
 .icon-link{display:inline-flex;align-items:center;gap:7px}
+[aria-busy="true"].is-submitting .icon{display:none}
+[aria-busy="true"].is-submitting::before{content:"";width:15px;height:15px;border:2px solid currentColor;border-inline-end-color:transparent;border-radius:50%;animation:button-spin .7s linear infinite}
+@keyframes button-spin{to{transform:rotate(360deg)}}
+.site-status{display:flex;flex-direction:column;align-items:center;gap:9px;flex:0 0 auto}
+.site-status .inline{display:block}
+.site-status .status-action{min-width:82px}
 [dir="rtl"] .icon-arrow-left{transform:scaleX(-1)}
 .backup-schedule{margin-top:16px;margin-bottom:16px;background:#fbfcff}
 .backup-schedule .roadmap-head h3{margin:0}

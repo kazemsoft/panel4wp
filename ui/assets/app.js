@@ -10,6 +10,21 @@ try {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  document.querySelectorAll("form[data-disable-on-submit]").forEach((form) => {
+    form.addEventListener("submit", () => {
+      const button = form.querySelector('button[type="submit"], button:not([type])');
+      if (!button || button.disabled) return;
+
+      button.disabled = true;
+      button.setAttribute("aria-busy", "true");
+      button.classList.add("is-submitting");
+      const label = button.querySelector(".button-label");
+      if (label && form.dataset.progressLabel) {
+        label.textContent = form.dataset.progressLabel;
+      }
+    });
+  });
+
   const toggle = document.querySelector("[data-sidebar-toggle]");
   if (!toggle) return;
 

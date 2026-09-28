@@ -80,6 +80,42 @@ func TestSidebarHighlightsCurrentPageAndStartsContentAtTop(t *testing.T) {
 	}
 }
 
+func TestLifecycleControlLivesUnderStatusAndLongActionsDisableOnSubmit(t *testing.T) {
+	for _, test := range []struct {
+		status core.Status
+		action string
+	}{
+		{status: core.StatusRunning, action: "/sites/abc123/stop"},
+		{status: core.StatusStopped, action: "/sites/abc123/start"},
+	} {
+		var output bytes.Buffer
+		v := view{LoggedIn: true, Page: "site", CSRF: "csrf-test", Language: "en", Direction: "ltr", Sites: []core.Site{{ID: "abc123", Domain: "demo.localhost", Title: "Demo", Status: test.status}}}
+		if err := page(v).Render(context.Background(), &output); err != nil {
+			t.Fatal(err)
+		}
+		html := output.String()
+		statusIndex := strings.Index(html, `class="site-status"`)
+		actionIndex := strings.Index(html, `action="`+test.action+`"`)
+		detailsIndex := strings.Index(html, `class="site-details"`)
+		if statusIndex < 0 || actionIndex < statusIndex || detailsIndex < actionIndex {
+			t.Errorf("%s action is not rendered below the status badge", test.status)
+		}
+		for _, required := range []string{`data-disable-on-submit`, `data-progress-label="Working…"`, `class="button-label"`} {
+			if !strings.Contains(html, required) {
+				t.Errorf("missing submit-state element %q", required)
+			}
+		}
+	}
+
+	var output bytes.Buffer
+	if err := page(view{LoggedIn: true, Page: "new", CSRF: "csrf-test", Language: "en", Direction: "ltr"}).Render(context.Background(), &output); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), `action="/sites" method="post" data-disable-on-submit`) {
+		t.Fatal("new WordPress site form does not prevent duplicate submission")
+	}
+}
+
 func TestFileManagerConfirmsDeletionAndPreservesOperations(t *testing.T) {
 	var output bytes.Buffer
 	v := filesView{Site: core.Site{ID: "abc123", Domain: "demo.localhost"}, CSRF: "csrf-test", Entries: []fileEntryView{{FileEntry: core.FileEntry{Name: "test.txt", Type: "file"}, Path: "test.txt"}}}

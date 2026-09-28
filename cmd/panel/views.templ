@@ -122,9 +122,9 @@ templ documentHead(v view) {
 		<meta charset="utf-8"/>
 		<meta name="viewport" content="width=device-width, initial-scale=1"/>
 		<title>panel4wp · { v.T("workspace") }</title>
-		<link rel="stylesheet" href="/assets/app.css?v=4"/>
-		<script src="/assets/htmx.min.js?v=4" defer></script>
-		<script src="/assets/app.js?v=4" defer></script>
+		<link rel="stylesheet" href="/assets/app.css?v=5"/>
+		<script src="/assets/htmx.min.js?v=5" defer></script>
+		<script src="/assets/app.js?v=5" defer></script>
 	</head>
 }
 
@@ -208,7 +208,7 @@ templ dashboardMetrics(v view) {
 templ newSite(v view) {
 	<section id="create-site" class="form-card">
 		<div class="eyebrow">{ v.T("new_workspace") }</div><h2>{ v.T("create_site") }</h2><p class="hint">{ v.T("create_site_hint") }</p>
-		<form action="/sites" method="post"><input type="hidden" name="csrf" value={ v.CSRF }/>
+		<form action="/sites" method="post" data-disable-on-submit data-progress-label={ v.T("in_progress") }><input type="hidden" name="csrf" value={ v.CSRF }/>
 			<label>{ v.T("domain") }<input name="domain" placeholder="example.com"/></label>
 			<label>{ v.T("site_title") }<input name="title" required maxlength="120"/></label>
 			<label>{ v.T("wordpress_admin_email") }<input type="email" name="email" required/></label>
@@ -249,7 +249,14 @@ templ siteCard(v view, site core.Site) {
 	{{ stats := v.Stats[site.ID] }}
 	{{ storage, hasStorage := v.Storage[site.ID] }}
 	<article class="card site-card">
-		<div class="site-head"><div class="site-icon">W</div><div class="site-meta"><h3>{ site.Title }</h3><a href={ templ.URL(sitePublicURL(site.Domain)) } target="_blank" rel="noopener">{ site.Domain }</a><small>{ site.ID } · { fmt.Sprintf("%d MB · %g CPU", site.MemoryMB, site.CPUs) }</small></div><span class={ "badge " + string(site.Status) }>{ v.T("status_" + string(site.Status)) }</span></div>
+		<div class="site-head"><div class="site-icon">W</div><div class="site-meta"><h3>{ site.Title }</h3><a href={ templ.URL(sitePublicURL(site.Domain)) } target="_blank" rel="noopener">{ site.Domain }</a><small>{ site.ID } · { fmt.Sprintf("%d MB · %g CPU", site.MemoryMB, site.CPUs) }</small></div><div class="site-status"><span class={ "badge " + string(site.Status) }>{ v.T("status_" + string(site.Status)) }</span>
+			if v.Page == "site" && site.Status == core.StatusRunning {
+				@actionForm(v.CSRF, "/sites/"+site.ID+"/stop", "secondary status-action", "stop", v.T("stop"), v.T("in_progress"))
+			}
+			if v.Page == "site" && site.Status == core.StatusStopped {
+				@actionForm(v.CSRF, "/sites/"+site.ID+"/start", "status-action", "play", v.T("start"), v.T("in_progress"))
+			}
+		</div></div>
 		<div class="site-details">
 			if stats.WordPress != nil || stats.Database != nil {
 				<details><summary>{ v.T("live_resource_usage") }</summary>
@@ -281,24 +288,18 @@ templ siteWorkspace(v view, site core.Site) {
 		<a class="button secondary" href={ templ.URL("/sites/" + site.ID) }>@icon("dashboard")<span class="button-label">{ v.T("overview") }</span></a><a class="button secondary" href={ templ.URL("/sites/" + site.ID + "/backups") }>@icon("backup")<span class="button-label">{ v.T("backups") }</span></a><a class="button secondary" href={ templ.URL("/sites/" + site.ID + "/updates") }>@icon("refresh")<span class="button-label">{ v.T("updates") }</span></a><a class="button secondary" href={ templ.URL("/sites/" + site.ID + "/database") }>@icon("database")<span class="button-label">{ v.T("database") }</span></a><a class="button secondary" href={ templ.URL("/sites/" + site.ID + "/files") }>@icon("files")<span class="button-label">{ v.T("files") }</span></a>
 	</div>
 	<div class="site-actions">
-		if v.Page == "site" && site.Status == core.StatusRunning {
-			@actionForm(v.CSRF, "/sites/"+site.ID+"/stop", "secondary", "stop", v.T("stop"))
-		}
 		if v.Page == "backups" && site.Status == core.StatusRunning {
-			@actionForm(v.CSRF, "/sites/"+site.ID+"/backup", "", "backup", v.T("backup_now"))
+			@actionForm(v.CSRF, "/sites/"+site.ID+"/backup", "", "backup", v.T("backup_now"), v.T("in_progress"))
 		}
 		if v.Page == "updates" && site.Status == core.StatusRunning {
-			@actionForm(v.CSRF, "/sites/"+site.ID+"/update", "secondary", "refresh", v.T("update_wordpress"))
+			@actionForm(v.CSRF, "/sites/"+site.ID+"/update", "secondary", "refresh", v.T("update_wordpress"), v.T("in_progress"))
 		}
 		if v.Page == "database" && site.Status == core.StatusRunning {
-			@actionForm(v.CSRF, "/sites/"+site.ID+"/database-start", "secondary", "database", v.T("open_database_manager"))
+			@actionForm(v.CSRF, "/sites/"+site.ID+"/database-start", "secondary", "database", v.T("open_database_manager"), v.T("in_progress"))
 			<small>{ v.T("database_access_hint") }</small>
 		}
-		if v.Page == "site" && site.Status == core.StatusStopped {
-			@actionForm(v.CSRF, "/sites/"+site.ID+"/start", "", "play", v.T("start"))
-		}
 		if v.Page == "site" && site.Status == core.StatusFailed {
-			@actionForm(v.CSRF, "/sites/"+site.ID+"/retry", "", "refresh", v.T("retry"))
+			@actionForm(v.CSRF, "/sites/"+site.ID+"/retry", "", "refresh", v.T("retry"), v.T("in_progress"))
 		}
 	</div>
 	<div class="site-details">
@@ -341,8 +342,8 @@ templ backupSchedule(v view, site core.Site) {
 	</section>
 }
 
-templ actionForm(csrf, action, className, iconName, label string) {
-	<form class="inline" action={ action } method="post"><input type="hidden" name="csrf" value={ csrf }/><button class={ className }>@icon(iconName)<span class="button-label">{ label }</span></button></form>
+templ actionForm(csrf, action, className, iconName, label, progressLabel string) {
+	<form class="inline" action={ action } method="post" data-disable-on-submit data-progress-label={ progressLabel }><input type="hidden" name="csrf" value={ csrf }/><button class={ className }>@icon(iconName)<span class="button-label">{ label }</span></button></form>
 }
 
 templ backupList(v view, site core.Site) {
@@ -429,7 +430,7 @@ templ future(title, help string) { <div class="future">{ title }<span>{ help }</
 
 templ filesPage(v filesView) {
 	<!doctype html><html lang={ v.Language } dir={ v.Direction }>
-	<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>panel4wp · { v.T("file_manager") }</title><link rel="stylesheet" href="/assets/app.css?v=4"/><script src="/assets/htmx.min.js?v=4" defer></script><script src="/assets/app.js?v=4" defer></script></head>
+	<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>panel4wp · { v.T("file_manager") }</title><link rel="stylesheet" href="/assets/app.css?v=5"/><script src="/assets/htmx.min.js?v=5" defer></script><script src="/assets/app.js?v=5" defer></script></head>
 	<body><div class="shell">@sidebar(v.Language, v.PagePath, v.Languages, v.T, v.CSRF, "files")
 	<div class="workspace"><header class="file-topbar"><a class="icon-link" href={ templ.URL("/sites/" + v.Site.ID) }>@icon("arrow-left")<span>{ v.T("back_to_site") }</span></a><div class="eyebrow file-eyebrow">{ v.T("site_workspace") }</div><h1>{ v.T("file_manager") }</h1><p class="muted">{ v.Site.Domain } · wp-content</p></header>@alerts(v.Error, v.Message)
 	<section><p class="path">{ v.T("path") }: <code>/wp-content
