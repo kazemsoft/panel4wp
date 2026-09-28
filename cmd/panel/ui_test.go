@@ -16,7 +16,7 @@ import (
 
 func TestIndependentPagesPreserveActions(t *testing.T) {
 	site := core.Site{ID: "abc123", Domain: "demo.localhost", Title: `<script>alert(1)</script>`, Status: core.StatusRunning, Backups: []core.Backup{{ID: "backup123"}}}
-	for pageName, actions := range map[string][]string{"dashboard": {}, "site": {"stop", "delete"}, "backups": {"backup", "restore", "backup-delete"}, "updates": {"update"}, "database": {"database-start"}} {
+	for pageName, actions := range map[string][]string{"dashboard": {}, "site": {"stop", "delete"}, "backups": {"backup", "backup-schedule", "restore", "backup-delete"}, "updates": {"update"}, "database": {"database-start"}} {
 		t.Run(pageName, func(t *testing.T) {
 			var output bytes.Buffer
 			if err := page(view{LoggedIn: true, Page: pageName, CSRF: "csrf-test", Sites: []core.Site{site}, Language: "en", Direction: "ltr"}).Render(context.Background(), &output); err != nil {
@@ -39,6 +39,10 @@ func TestIndependentPagesPreserveActions(t *testing.T) {
 				}
 				if !strings.Contains(html, `href="/sites/abc123"`) {
 					t.Error("missing manage link")
+				}
+			} else if pageName == "backups" {
+				if !strings.Contains(html, `<code>demo.localhost</code>`) || strings.Contains(html, "%!(EXTRA") {
+					t.Error("backup confirmation must show the domain without formatting errors")
 				}
 			}
 		})

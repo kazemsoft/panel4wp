@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/kazemsoft/panel4wp/internal/core"
 	"github.com/kazemsoft/panel4wp/internal/store"
 )
 
@@ -147,5 +149,75 @@ func TestLoginCreateAndRejectMissingCSRF(t *testing.T) {
 	badResp.Body.Close()
 	if badResp.StatusCode != http.StatusForbidden || workerCalls != 1 {
 		t.Fatalf("missing CSRF passed: %d, calls %d", badResp.StatusCode, workerCalls)
+	}
+}
+
+func TestScheduledBackupRunsAndPrunesOnlyScheduledCopies(t *testing.T) {
+	now := time.Date(2026, 9, 26, 8, 0, 0, 0, time.UTC)
+	var deleted []string
+	worker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/backup":
+			var req core.BackupRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(core.Backup{ID: req.BackupID, CreatedAt: now})
+		case "/backup/delete":
+			var req core.DeleteBackupRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatal(err)
+			}
+			deleted = append(deleted, req.BackupID)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer worker.Close()
+
+	dataStore := store.New(filepath.Join(t.TempDir(), "sites.json"))
+	site := core.Site{
+		ID: "0123456789abcdef", Domain: "demo.localhost", Title: "Demo", AdminEmail: "owner@example.com", Status: core.StatusRunning,
+		BackupPolicy: core.BackupPolicy{Enabled: true, IntervalHours: 24, Retention: 2, NextRunAt: now.Add(-time.Minute)},
+		Backups: []core.Backup{
+			{ID: "20260920T080000Z-11111111", CreatedAt: now.Add(-6 * 24 * time.Hour), Source: core.BackupSourceManual},
+			{ID: "20260921T080000Z-22222222", CreatedAt: now.Add(-5 * 24 * time.Hour), Source: core.BackupSourceScheduled},
+			{ID: "20260922T080000Z-33333333", CreatedAt: now.Add(-4 * 24 * time.Hour), Source: core.BackupSourceScheduled},
+		},
+	}
+	if err := dataStore.Put(site); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{store: dataStore, workerURL: worker.URL, workerToken: strings.Repeat("t", 64), client: worker.Client()}
+	a.runScheduledBackups(now)
+
+	got, ok, err := dataStore.Get(site.ID)
+	if err != nil || !ok {
+		t.Fatalf("site missing: %v", err)
+	}
+	if got.BackupPolicy.LastSuccessAt != now || got.BackupPolicy.NextRunAt != now.Add(24*time.Hour) || got.BackupPolicy.LastError != "" {
+		t.Fatalf("unexpected policy state: %#v", got.BackupPolicy)
+	}
+	if scheduledBackupCount(got.Backups) != 2 || len(got.Backups) != 3 {
+		t.Fatalf("retention removed the wrong backups: %#v", got.Backups)
+	}
+	if len(deleted) != 1 || deleted[0] != "20260921T080000Z-22222222" {
+		t.Fatalf("unexpected retention deletions: %#v", deleted)
+	}
+}
+
+func TestScheduledBackupPostponesStoppedSite(t *testing.T) {
+	now := time.Date(2026, 9, 26, 8, 0, 0, 0, time.UTC)
+	dataStore := store.New(filepath.Join(t.TempDir(), "sites.json"))
+	site := core.Site{ID: "0123456789abcdef", Domain: "demo.localhost", Status: core.StatusStopped, BackupPolicy: core.BackupPolicy{Enabled: true, IntervalHours: 12, Retention: 7, NextRunAt: now.Add(-time.Minute)}}
+	if err := dataStore.Put(site); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{store: dataStore}
+	a.runScheduledBackups(now)
+	got, _, _ := dataStore.Get(site.ID)
+	if got.BackupPolicy.LastError != "site is not running" || got.BackupPolicy.NextRunAt != now.Add(12*time.Hour) {
+		t.Fatalf("stopped site was not postponed: %#v", got.BackupPolicy)
 	}
 }

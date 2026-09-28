@@ -32,6 +32,16 @@
 .form-submit{margin-top:22px}
 .icon-link{display:inline-flex;align-items:center;gap:7px}
 [dir="rtl"] .icon-arrow-left{transform:scaleX(-1)}
+.backup-schedule{margin-top:16px;margin-bottom:16px;background:#fbfcff}
+.backup-schedule .roadmap-head h3{margin:0}
+.backup-schedule form{padding:0}
+.schedule-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.schedule-grid label{margin-block:12px}
+.schedule-grid small{display:block;margin-top:6px}
+.schedule-status{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px}
+.schedule-status span{display:flex;flex-direction:column;padding:10px 12px;border:1px solid var(--line);border-radius:9px;background:#fff;color:var(--muted);font-size:12px}
+.schedule-status strong{color:var(--ink);font-size:11px;margin-bottom:2px}
+.schedule-error{margin-top:14px;margin-bottom:0}
 
 .sidebar-collapsed .shell{grid-template-columns:88px minmax(0,1fr)}
 .sidebar-collapsed .sidebar{padding-inline:16px}
@@ -65,4 +75,5 @@
   .sidebar-collapsed .github-cta svg{width:18px;height:18px}
   .sidebar-collapsed .sidebar-footer form button{width:auto}
   .sidebar-collapsed .sidebar-footer form button .button-label{display:inline}
+  .schedule-grid,.schedule-status{grid-template-columns:1fr}
 }

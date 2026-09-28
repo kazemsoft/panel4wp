@@ -30,6 +30,8 @@ Log in with the password printed by the installer. The dashboard contains server
 
 The panel supports Start, Stop, Retry after failed creation, verified Backup, in-place Restore, individual backup deletion, and permanent site deletion. A backup contains a consistent MariaDB dump, the complete WordPress volume, a manifest, and SHA-256 checksums. Restore first creates and retains a safety backup, then verifies the selected backup before replacing data. Local backups live under `data/backups/<site-id>`.
 
+Each site can run verified backups automatically every 6 hours, 12 hours, day, or week. Retention keeps between 1 and 30 scheduled backups and never removes manual or safety backups. A stopped site is postponed until its next interval, and scheduler results are written to the audit log. Scheduled backups are currently local; off-host copies and encryption remain planned.
+
 The Sites page can request a live resource snapshot for every running site. It displays CPU, memory, network I/O, block I/O, and process counts separately for WordPress and MariaDB. Metrics are loaded only when requested so routine panel navigation does not run Docker stats.
 
 The same refresh measures the real disk space occupied by each site's WordPress volume, MariaDB volume, and local backups. Hard filesystem quotas are not enforced yet.

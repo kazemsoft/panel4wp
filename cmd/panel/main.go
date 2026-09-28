@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -84,6 +85,34 @@ func (v view) T(key string) string { return i18n.T(v.Language, key) }
 
 func formatTime(t time.Time) string  { return t.Local().Format("2006-01-02 15:04") }
 func formatUnixTime(ts int64) string { return formatTime(time.Unix(ts, 0)) }
+func formatOptionalTime(t time.Time, fallback string) string {
+	if t.IsZero() {
+		return fallback
+	}
+	return formatTime(t)
+}
+func backupIntervalValue(policy core.BackupPolicy) int {
+	if policy.IntervalHours == 0 {
+		return 24
+	}
+	return policy.IntervalHours
+}
+func backupRetentionValue(policy core.BackupPolicy) int {
+	if policy.Retention == 0 {
+		return 7
+	}
+	return policy.Retention
+}
+func backupSourceKey(source string) string {
+	switch source {
+	case core.BackupSourceScheduled:
+		return "backup_source_scheduled"
+	case core.BackupSourceSafety:
+		return "backup_source_safety"
+	default:
+		return "backup_source_manual"
+	}
+}
 func formatBytes(n int64) string {
 	if n < 1024 {
 		return fmt.Sprintf("%d B", n)
@@ -668,6 +697,10 @@ func (a *app) siteAction(w http.ResponseWriter, r *http.Request) {
 		a.backupSite(w, r, site)
 		return
 	}
+	if action == "backup-schedule" {
+		a.saveBackupSchedule(w, r, site)
+		return
+	}
 	if action == "backup-delete" {
 		a.deleteBackup(w, r, site)
 		return
@@ -742,24 +775,183 @@ func (a *app) backupSite(w http.ResponseWriter, r *http.Request, site core.Site)
 		http.Error(w, "site must be running", http.StatusConflict)
 		return
 	}
-	id, err := core.NewBackupID(time.Now())
+	backup, err := a.performBackup(site, core.BackupSourceManual, time.Now())
 	if err != nil {
-		http.Error(w, "unable to generate backup ID", http.StatusInternalServerError)
-		return
-	}
-	var backup core.Backup
-	if err := a.callWorker("/backup", core.BackupRequest{Site: site, BackupID: id}, &backup); err != nil {
 		a.record("backup", site, false, err.Error())
 		a.render(w, r, view{LoggedIn: true, Error: "Backup failed: " + err.Error()})
 		return
 	}
 	site.Backups = append(site.Backups, backup)
 	if err := a.store.Put(site); err != nil {
+		_ = a.callWorker("/backup/delete", core.DeleteBackupRequest{SiteID: site.ID, BackupID: backup.ID}, nil)
 		http.Error(w, "backup completed but metadata could not be saved", http.StatusInternalServerError)
 		return
 	}
-	a.record("backup", site, true, id)
+	a.record("backup", site, true, backup.ID)
 	a.redirectWithFlashTo(w, r, "/sites/"+site.ID+"/backups", "Backup completed and verified", "")
+}
+
+func (a *app) performBackup(site core.Site, source string, now time.Time) (core.Backup, error) {
+	id, err := core.NewBackupID(now)
+	if err != nil {
+		return core.Backup{}, errors.New("unable to generate backup ID")
+	}
+	var backup core.Backup
+	if err := a.callWorker("/backup", core.BackupRequest{Site: site, BackupID: id}, &backup); err != nil {
+		return core.Backup{}, err
+	}
+	backup.Source = source
+	return backup, nil
+}
+
+func (a *app) saveBackupSchedule(w http.ResponseWriter, r *http.Request, site core.Site) {
+	enabled := r.FormValue("enabled") == "on"
+	interval, intervalErr := strconv.Atoi(r.FormValue("interval_hours"))
+	retention, retentionErr := strconv.Atoi(r.FormValue("retention"))
+	if !enabled {
+		if intervalErr != nil {
+			interval = 24
+		}
+		if retentionErr != nil {
+			retention = 7
+		}
+	}
+	policy := site.BackupPolicy
+	policy.Enabled, policy.IntervalHours, policy.Retention = enabled, interval, retention
+	if err := core.ValidateBackupPolicy(policy); err != nil {
+		a.render(w, r, view{LoggedIn: true, Page: "backups", SelectedID: site.ID, Error: err.Error()})
+		return
+	}
+	if enabled {
+		policy.NextRunAt = time.Now().UTC().Add(time.Duration(interval) * time.Hour)
+		policy.LastError = ""
+	} else {
+		policy.NextRunAt = time.Time{}
+		policy.LastError = ""
+	}
+	site.BackupPolicy = policy
+	if err := a.store.Put(site); err != nil {
+		http.Error(w, "unable to save backup schedule", http.StatusInternalServerError)
+		return
+	}
+	a.record("backup-schedule", site, true, fmt.Sprintf("enabled=%t interval=%dh retention=%d", enabled, interval, retention))
+	a.redirectWithFlashTo(w, r, "/sites/"+site.ID+"/backups", "Backup schedule saved", "")
+}
+
+func (a *app) runBackupScheduler(ctx context.Context, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case now := <-ticker.C:
+			a.runScheduledBackups(now.UTC())
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func (a *app) runScheduledBackups(now time.Time) {
+	sites, err := a.store.List()
+	if err != nil {
+		log.Printf("scheduled backup: list sites: %v", err)
+		return
+	}
+	for _, candidate := range sites {
+		if core.ValidateBackupPolicy(candidate.BackupPolicy) != nil || !candidate.BackupPolicy.Enabled || candidate.BackupPolicy.NextRunAt.IsZero() || candidate.BackupPolicy.NextRunAt.After(now) {
+			continue
+		}
+		a.opsMu.Lock()
+		site, ok, getErr := a.store.Get(candidate.ID)
+		if getErr == nil && ok && site.BackupPolicy.Enabled && !site.BackupPolicy.NextRunAt.After(now) {
+			a.runScheduledBackup(site, now)
+		}
+		a.opsMu.Unlock()
+	}
+}
+
+func (a *app) runScheduledBackup(site core.Site, now time.Time) {
+	policy := site.BackupPolicy
+	policy.LastAttemptAt = now
+	policy.NextRunAt = now.Add(time.Duration(policy.IntervalHours) * time.Hour)
+	if site.Status != core.StatusRunning {
+		policy.LastError = "site is not running"
+		site.BackupPolicy = policy
+		_ = a.store.Put(site)
+		a.record("scheduled-backup", site, false, policy.LastError)
+		return
+	}
+	backup, err := a.performBackup(site, core.BackupSourceScheduled, now)
+	if err != nil {
+		policy.LastError = truncateText(err.Error(), 500)
+		site.BackupPolicy = policy
+		_ = a.store.Put(site)
+		a.record("scheduled-backup", site, false, policy.LastError)
+		return
+	}
+	policy.LastSuccessAt, policy.LastError = backup.CreatedAt, ""
+	site.BackupPolicy = policy
+	site.Backups = append(site.Backups, backup)
+	if err := a.store.Put(site); err != nil {
+		_ = a.callWorker("/backup/delete", core.DeleteBackupRequest{SiteID: site.ID, BackupID: backup.ID}, nil)
+		a.record("scheduled-backup", site, false, "metadata: "+err.Error())
+		return
+	}
+	a.record("scheduled-backup", site, true, backup.ID)
+	a.pruneScheduledBackups(&site)
+}
+
+func (a *app) pruneScheduledBackups(site *core.Site) {
+	retention := site.BackupPolicy.Retention
+	for scheduledBackupCount(site.Backups) > retention {
+		index := oldestScheduledBackup(site.Backups)
+		if index < 0 {
+			return
+		}
+		backup := site.Backups[index]
+		if err := a.callWorker("/backup/delete", core.DeleteBackupRequest{SiteID: site.ID, BackupID: backup.ID}, nil); err != nil {
+			site.BackupPolicy.LastError = truncateText("retention cleanup: "+err.Error(), 500)
+			_ = a.store.Put(*site)
+			a.record("scheduled-backup-retention", *site, false, err.Error())
+			return
+		}
+		site.Backups = append(site.Backups[:index], site.Backups[index+1:]...)
+		if err := a.store.Put(*site); err != nil {
+			a.record("scheduled-backup-retention", *site, false, "metadata: "+err.Error())
+			return
+		}
+		a.record("scheduled-backup-retention", *site, true, backup.ID)
+	}
+}
+
+func scheduledBackupCount(backups []core.Backup) int {
+	count := 0
+	for _, backup := range backups {
+		if backup.Source == core.BackupSourceScheduled {
+			count++
+		}
+	}
+	return count
+}
+
+func oldestScheduledBackup(backups []core.Backup) int {
+	oldest := -1
+	for index, backup := range backups {
+		if backup.Source != core.BackupSourceScheduled {
+			continue
+		}
+		if oldest == -1 || backup.CreatedAt.Before(backups[oldest].CreatedAt) {
+			oldest = index
+		}
+	}
+	return oldest
+}
+
+func truncateText(value string, limit int) string {
+	if len(value) <= limit {
+		return value
+	}
+	return value[:limit]
 }
 
 func (a *app) deleteBackup(w http.ResponseWriter, r *http.Request, site core.Site) {
@@ -815,6 +1007,7 @@ func (a *app) updateSite(w http.ResponseWriter, r *http.Request, site core.Site)
 		a.render(w, r, view{LoggedIn: true, Error: "Update stopped because the safety backup failed: " + err.Error()})
 		return
 	}
+	safety.Source = core.BackupSourceSafety
 	site.Backups = append(site.Backups, safety)
 	if err := a.store.Put(site); err != nil {
 		a.render(w, r, view{LoggedIn: true, Error: "Update stopped because safety backup metadata could not be saved"})
@@ -860,6 +1053,7 @@ func (a *app) restoreSite(w http.ResponseWriter, r *http.Request, site core.Site
 		a.render(w, r, view{LoggedIn: true, Error: "Restore stopped because the safety backup failed: " + err.Error()})
 		return
 	}
+	safety.Source = core.BackupSourceSafety
 	site.Backups = append(site.Backups, safety)
 	if err := a.store.Put(site); err != nil {
 		a.render(w, r, view{LoggedIn: true, Error: "Restore stopped because safety backup metadata could not be saved"})
@@ -1143,6 +1337,7 @@ func main() {
 			}
 		}
 	}
+	go app.runBackupScheduler(context.Background(), time.Minute)
 	server := &http.Server{Addr: ":8080", Handler: app, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 21 * time.Minute, IdleTimeout: 60 * time.Second}
 	log.Println("panel listening on :8080")
 	if err := server.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {

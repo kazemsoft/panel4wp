@@ -1,6 +1,7 @@
 package store
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -25,5 +26,21 @@ func TestStorePersistsSites(t *testing.T) {
 	}
 	if got, err := s.List(); err != nil || len(got) != 0 {
 		t.Fatalf("site not deleted: %#v, %v", got, err)
+	}
+}
+
+func TestOldSiteMetadataLoadsWithoutBackupPolicy(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "sites.json")
+	legacy := `{"0123456789abcdef":{"id":"0123456789abcdef","domain":"test.localhost","status":"running","created_at":"2026-09-20T00:00:00Z"}}`
+	if err := os.WriteFile(path, []byte(legacy), 0600); err != nil {
+		t.Fatal(err)
+	}
+	site, ok, err := New(path).Get("0123456789abcdef")
+	if err != nil || !ok {
+		t.Fatalf("legacy site did not load: %v", err)
+	}
+	if site.BackupPolicy.Enabled || site.BackupPolicy.IntervalHours != 0 || !site.BackupPolicy.NextRunAt.IsZero() {
+		t.Fatalf("legacy site gained an active schedule: %#v", site.BackupPolicy)
 	}
 }

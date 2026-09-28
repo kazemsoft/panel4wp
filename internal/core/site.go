@@ -22,22 +22,40 @@ const (
 )
 
 type Site struct {
-	ID          string    `json:"id"`
-	Domain      string    `json:"domain"`
-	Title       string    `json:"title"`
-	AdminEmail  string    `json:"admin_email"`
-	MemoryMB    int       `json:"memory_mb,omitempty"`
-	CPUs        float64   `json:"cpus,omitempty"`
-	Status      Status    `json:"status"`
-	Error       string    `json:"error,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
-	Backups     []Backup  `json:"backups,omitempty"`
-	MailEnabled bool      `json:"mail_enabled,omitempty"`
+	ID           string       `json:"id"`
+	Domain       string       `json:"domain"`
+	Title        string       `json:"title"`
+	AdminEmail   string       `json:"admin_email"`
+	MemoryMB     int          `json:"memory_mb,omitempty"`
+	CPUs         float64      `json:"cpus,omitempty"`
+	Status       Status       `json:"status"`
+	Error        string       `json:"error,omitempty"`
+	CreatedAt    time.Time    `json:"created_at"`
+	Backups      []Backup     `json:"backups,omitempty"`
+	BackupPolicy BackupPolicy `json:"backup_policy,omitempty"`
+	MailEnabled  bool         `json:"mail_enabled,omitempty"`
 }
 
 type Backup struct {
 	ID        string    `json:"id"`
 	CreatedAt time.Time `json:"created_at"`
+	Source    string    `json:"source,omitempty"`
+}
+
+const (
+	BackupSourceManual    = "manual"
+	BackupSourceScheduled = "scheduled"
+	BackupSourceSafety    = "safety"
+)
+
+type BackupPolicy struct {
+	Enabled       bool      `json:"enabled"`
+	IntervalHours int       `json:"interval_hours,omitempty"`
+	Retention     int       `json:"retention,omitempty"`
+	NextRunAt     time.Time `json:"next_run_at,omitempty"`
+	LastAttemptAt time.Time `json:"last_attempt_at,omitempty"`
+	LastSuccessAt time.Time `json:"last_success_at,omitempty"`
+	LastError     string    `json:"last_error,omitempty"`
 }
 
 type CreateRequest struct {
@@ -135,6 +153,21 @@ func RandomPassword() (string, error) {
 func ValidID(id string) bool { return siteID.MatchString(id) }
 
 func ValidBackupID(id string) bool { return backupID.MatchString(id) }
+
+func ValidateBackupPolicy(policy BackupPolicy) error {
+	if !policy.Enabled {
+		return nil
+	}
+	switch policy.IntervalHours {
+	case 6, 12, 24, 168:
+	default:
+		return errors.New("backup interval must be 6, 12, 24, or 168 hours")
+	}
+	if policy.Retention < 1 || policy.Retention > 30 {
+		return errors.New("backup retention must be between 1 and 30")
+	}
+	return nil
+}
 
 func ValidRelativePath(path string, allowEmpty bool) bool {
 	if path == "" {

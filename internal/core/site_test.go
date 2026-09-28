@@ -53,6 +53,27 @@ func TestBackupID(t *testing.T) {
 	}
 }
 
+func TestBackupPolicyValidation(t *testing.T) {
+	for _, policy := range []BackupPolicy{
+		{},
+		{Enabled: true, IntervalHours: 6, Retention: 1},
+		{Enabled: true, IntervalHours: 168, Retention: 30},
+	} {
+		if err := ValidateBackupPolicy(policy); err != nil {
+			t.Errorf("valid policy rejected: %#v: %v", policy, err)
+		}
+	}
+	for _, policy := range []BackupPolicy{
+		{Enabled: true, IntervalHours: 1, Retention: 7},
+		{Enabled: true, IntervalHours: 24, Retention: 0},
+		{Enabled: true, IntervalHours: 24, Retention: 31},
+	} {
+		if err := ValidateBackupPolicy(policy); err == nil {
+			t.Errorf("invalid policy accepted: %#v", policy)
+		}
+	}
+}
+
 func TestResourceLimits(t *testing.T) {
 	memory, cpus := ResourceLimits(Site{})
 	if memory != 512 || cpus != 1 {
