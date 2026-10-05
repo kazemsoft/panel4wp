@@ -2,6 +2,8 @@
   encode zstd gzip
   reverse_proxy panel:8080 {
     flush_interval -1
+    header_up X-Panel-Client-IP {remote_host}
+    header_up X-Panel-Proxy-Token {env.PANEL_PROXY_TOKEN}
   }
 }
 

@@ -2,6 +2,15 @@ package i18n
 
 var dictionaries = map[string]map[string]string{
 	"en": {
+		"refresh_status":     "Refresh service status",
+		"status_checked":     "Last status check",
+		"status_unknown":     "Status unavailable",
+		"status_unhealthy":   "Service issue",
+		"status_busy":        "Operation in progress",
+		"operation_pending":  "The operation has no confirmed result yet. Refresh service status before trying again.",
+		"status_unavailable": "Service status could not be checked. Check the worker and Docker, then refresh.",
+		"status_refreshed":   "Service status refreshed",
+
 		"language":                "Language",
 		"collapse_sidebar":        "Collapse sidebar",
 		"expand_sidebar":          "Expand sidebar",
@@ -182,6 +191,15 @@ var dictionaries = map[string]map[string]string{
 		"footer":                  "Built for independent WordPress hosting.",
 	},
 	"ar": {
+		"refresh_status":     "تحديث حالة الخدمات",
+		"status_checked":     "آخر فحص للحالة",
+		"status_unknown":     "الحالة غير معروفة",
+		"status_unhealthy":   "مشكلة في الخدمة",
+		"status_busy":        "العملية قيد التنفيذ",
+		"operation_pending":  "لم يتم تأكيد نتيجة العملية بعد. حدّث حالة الخدمات قبل المحاولة مجدداً.",
+		"status_unavailable": "تعذر فحص حالة الخدمات. تحقق من worker وDocker ثم حدّث الحالة.",
+		"status_refreshed":   "تم تحديث حالة الخدمات",
+
 		"language":                "اللغة",
 		"collapse_sidebar":        "طي الشريط الجانبي",
 		"expand_sidebar":          "توسيع الشريط الجانبي",
@@ -362,6 +380,15 @@ var dictionaries = map[string]map[string]string{
 		"footer":                  "مصمم لاستضافة WordPress المستقلة.",
 	},
 	"fa": {
+		"refresh_status":     "تازه‌سازی وضعیت سرویس‌ها",
+		"status_checked":     "آخرین بررسی وضعیت",
+		"status_unknown":     "وضعیت نامشخص",
+		"status_unhealthy":   "اختلال سرویس",
+		"status_busy":        "عملیات در جریان",
+		"operation_pending":  "نتیجهٔ عملیات هنوز تأیید نشده است. پیش از تلاش مجدد وضعیت سرویس‌ها را تازه‌سازی کنید.",
+		"status_unavailable": "بررسی وضعیت سرویس‌ها ممکن نشد. worker و داکر را بررسی و سپس وضعیت را تازه‌سازی کنید.",
+		"status_refreshed":   "وضعیت سرویس‌ها تازه‌سازی شد",
+
 		"language":                "زبان",
 		"collapse_sidebar":        "بستن نوار کناری",
 		"expand_sidebar":          "باز کردن نوار کناری",
@@ -542,6 +569,15 @@ var dictionaries = map[string]map[string]string{
 		"footer":                  "ساخته‌شده برای میزبانی مستقل وردپرس.",
 	},
 	"es": {
+		"refresh_status":     "Actualizar estado de servicios",
+		"status_checked":     "Última comprobación",
+		"status_unknown":     "Estado desconocido",
+		"status_unhealthy":   "Problema de servicio",
+		"status_busy":        "Operación en curso",
+		"operation_pending":  "El resultado aún no está confirmado. Actualiza el estado antes de intentarlo de nuevo.",
+		"status_unavailable": "No se pudo comprobar el estado. Revisa el worker y Docker y actualiza.",
+		"status_refreshed":   "Estado actualizado",
+
 		"language":                "Idioma",
 		"collapse_sidebar":        "Contraer barra lateral",
 		"expand_sidebar":          "Expandir barra lateral",
@@ -722,6 +758,15 @@ var dictionaries = map[string]map[string]string{
 		"footer":                  "Hecho para alojamiento WordPress independiente.",
 	},
 	"de": {
+		"refresh_status":     "Dienststatus aktualisieren",
+		"status_checked":     "Letzte Statusprüfung",
+		"status_unknown":     "Status unbekannt",
+		"status_unhealthy":   "Dienstproblem",
+		"status_busy":        "Vorgang läuft",
+		"operation_pending":  "Das Ergebnis ist noch nicht bestätigt. Aktualisiere den Status vor einem neuen Versuch.",
+		"status_unavailable": "Der Status konnte nicht geprüft werden. Prüfe Worker und Docker und aktualisiere.",
+		"status_refreshed":   "Dienststatus aktualisiert",
+
 		"language":                "Sprache",
 		"collapse_sidebar":        "Seitenleiste einklappen",
 		"expand_sidebar":          "Seitenleiste ausklappen",
@@ -902,6 +947,15 @@ var dictionaries = map[string]map[string]string{
 		"footer":                  "Für unabhängiges WordPress-Hosting entwickelt.",
 	},
 	"fr": {
+		"refresh_status":     "Actualiser les services",
+		"status_checked":     "Dernière vérification",
+		"status_unknown":     "État inconnu",
+		"status_unhealthy":   "Problème de service",
+		"status_busy":        "Opération en cours",
+		"operation_pending":  "Le résultat reste à confirmer. Actualisez les services avant de réessayer.",
+		"status_unavailable": "Impossible de vérifier les services. Vérifiez le worker et Docker puis actualisez.",
+		"status_refreshed":   "État des services actualisé",
+
 		"language":                "Langue",
 		"collapse_sidebar":        "Réduire la barre latérale",
 		"expand_sidebar":          "Développer la barre latérale",
@@ -1082,6 +1136,15 @@ var dictionaries = map[string]map[string]string{
 		"footer":                  "Conçu pour un hébergement WordPress indépendant.",
 	},
 	"zh": {
+		"refresh_status":     "刷新服务状态",
+		"status_checked":     "上次状态检查",
+		"status_unknown":     "状态未知",
+		"status_unhealthy":   "服务异常",
+		"status_busy":        "操作进行中",
+		"operation_pending":  "操作结果尚未确认。重试之前请刷新服务状态。",
+		"status_unavailable": "无法检查服务状态。请检查 worker 和 Docker，然后刷新。",
+		"status_refreshed":   "服务状态已刷新",
+
 		"language":                "语言",
 		"collapse_sidebar":        "收起侧边栏",
 		"expand_sidebar":          "展开侧边栏",
@@ -1262,6 +1325,15 @@ var dictionaries = map[string]map[string]string{
 		"footer":                  "为独立 WordPress 托管而构建。",
 	},
 	"ja": {
+		"refresh_status":     "サービス状態を更新",
+		"status_checked":     "最終状態確認",
+		"status_unknown":     "状態不明",
+		"status_unhealthy":   "サービスの問題",
+		"status_busy":        "処理中",
+		"operation_pending":  "処理結果が未確認です。再試行する前にサービス状態を更新してください。",
+		"status_unavailable": "サービス状態を確認できません。worker と Docker を確認して更新してください。",
+		"status_refreshed":   "サービス状態を更新しました",
+
 		"language":                "言語",
 		"collapse_sidebar":        "サイドバーを折りたたむ",
 		"expand_sidebar":          "サイドバーを展開",

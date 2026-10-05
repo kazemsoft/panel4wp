@@ -173,6 +173,7 @@ type worker struct {
 	token       string
 	panelDomain string
 	docker      runner
+	executionMu sync.Mutex
 	toolsMu     sync.Mutex
 	toolTimers  map[string]*time.Timer
 }
@@ -212,17 +213,21 @@ const databaseToolTemplate = `  phpmyadmin:
     security_opt: [no-new-privileges:true]
 `
 
-const listFilesPHP = `$root=realpath("/var/www/html/wp-content");$rel=$argv[1]??"";$p=realpath($root.($rel===""?"":"/".$rel));if($root===false||$p===false||($p!==$root&&!str_starts_with($p,$root."/"))||!is_dir($p)){fwrite(STDERR,"invalid directory");exit(3);}$out=[];foreach(scandir($p) as $n){if($n==="."||$n==="..")continue;$f=$p."/".$n;$s=lstat($f);$type=is_link($f)?"link":(is_dir($f)?"directory":"file");$out[]=["name"=>$n,"type"=>$type,"size"=>$type==="file"?(int)$s["size"]:0,"modified"=>(int)$s["mtime"]];}usort($out,fn($a,$b)=>($a["type"]==="directory"?0:1)<=>($b["type"]==="directory"?0:1)?:strnatcasecmp($a["name"],$b["name"]));echo json_encode($out,JSON_UNESCAPED_UNICODE|JSON_INVALID_UTF8_SUBSTITUTE);`
+// Native open_basedir checks constrain filesystem calls; lexical checks also
+// reject links before realpath would hide them. File commands run as www-data.
+const fileGuardPHP = `$root="/var/www/html/wp-content";function failPath(){fwrite(STDERR,"invalid file path");exit(3);}if(is_link($root)||!is_dir($root))failPath();function safePath($rel){global $root;if($rel==="")return $root;$parts=explode("/",$rel);$p=$root;foreach($parts as $part){if($part===""||$part==="."||$part==="..")failPath();$p.="/".$part;clearstatcache(true,$p);if(is_link($p))failPath();}return $p;}`
 
-const readFilePHP = `$root=realpath("/var/www/html/wp-content");$p=realpath($root."/".$argv[1]);if($root===false||$p===false||!str_starts_with($p,$root."/")||!is_file($p)||is_link($p)){fwrite(STDERR,"invalid file");exit(3);}if(filesize($p)>10485760){fwrite(STDERR,"file exceeds 10 MB");exit(4);}readfile($p);`
+const listFilesPHP = fileGuardPHP + `$p=safePath($argv[1]??"");if(!is_dir($p))failPath();$out=[];$d=opendir($p);if($d===false)failPath();while(($n=readdir($d))!==false){if($n==="."||$n==="..")continue;if(count($out)>=5000){fwrite(STDERR,"directory exceeds 5000 entries");exit(4);}$f=$p."/".$n;$s=@lstat($f);$type=($s===false||@is_link($f))?"link":(@is_dir($f)?"directory":"file");$out[]=["name"=>$n,"type"=>$type,"size"=>$type==="file"?(int)$s["size"]:0,"modified"=>$s===false?0:(int)$s["mtime"]];}usort($out,fn($a,$b)=>($a["type"]==="directory"?0:1)<=>($b["type"]==="directory"?0:1)?:strnatcasecmp($a["name"],$b["name"]));echo json_encode($out,JSON_UNESCAPED_UNICODE|JSON_INVALID_UTF8_SUBSTITUTE);`
 
-const writeFilePHP = `$root=realpath("/var/www/html/wp-content");$target=$root."/".$argv[1];$parent=realpath(dirname($target));if($root===false||$parent===false||($parent!==$root&&!str_starts_with($parent,$root."/"))||(file_exists($target)&&is_link($target))){fwrite(STDERR,"invalid file");exit(3);}$data=file_get_contents("php://stdin");if(strlen($data)>10485760){fwrite(STDERR,"file exceeds 10 MB");exit(4);}if(file_put_contents($target,$data,LOCK_EX)===false){fwrite(STDERR,"write failed");exit(5);}chmod($target,0644);`
+const readFilePHP = fileGuardPHP + `$p=safePath($argv[1]);if(!is_file($p))failPath();$f=fopen($p,"rb");if($f===false)failPath();$s=fstat($f);if($s["size"]>10485760){fwrite(STDERR,"file exceeds 10 MB");exit(4);}$data=stream_get_contents($f,10485761);fclose($f);if($data===false||strlen($data)>10485760){fwrite(STDERR,"file exceeds 10 MB");exit(4);}echo $data;`
 
-const makeDirPHP = `$root=realpath("/var/www/html/wp-content");$target=$root."/".$argv[1];$parent=realpath(dirname($target));if($root===false||$parent===false||($parent!==$root&&!str_starts_with($parent,$root."/"))||file_exists($target)){fwrite(STDERR,"invalid directory");exit(3);}if(!mkdir($target,0755)){fwrite(STDERR,"mkdir failed");exit(5);}`
+const writeFilePHP = fileGuardPHP + `$target=safePath($argv[1]);$parent=dirname($target);if(!is_dir($parent)||(file_exists($target)&&!is_file($target)))failPath();$data=file_get_contents("php://stdin");if(strlen($data)>10485760){fwrite(STDERR,"file exceeds 10 MB");exit(4);}$tmp=$parent."/.panel4wp-".bin2hex(random_bytes(16));$f=fopen($tmp,"xb");if($f===false){fwrite(STDERR,"write failed");exit(5);}$written=fwrite($f,$data);$ok=$written===strlen($data)&&fflush($f);fclose($f);safePath($argv[1]);if(!$ok||!rename($tmp,$target)){@unlink($tmp);fwrite(STDERR,"write failed");exit(5);}chmod($target,0644);`
 
-const deleteFilePHP = `$root=realpath("/var/www/html/wp-content");$p=realpath($root."/".$argv[1]);if($root===false||$p===false||!str_starts_with($p,$root."/")||is_link($p)){fwrite(STDERR,"invalid path");exit(3);}$ok=is_dir($p)?rmdir($p):unlink($p);if(!$ok){fwrite(STDERR,"delete failed; directories must be empty");exit(5);}`
+const makeDirPHP = fileGuardPHP + `$target=safePath($argv[1]);if(!is_dir(dirname($target))||file_exists($target))failPath();if(!mkdir($target,0755)){fwrite(STDERR,"mkdir failed");exit(5);}`
 
-const moveFilePHP = `$root=realpath("/var/www/html/wp-content");$source=realpath($root."/".$argv[1]);$target=$root."/".$argv[2];$parent=realpath(dirname($target));if($root===false||$source===false||!str_starts_with($source,$root."/")||is_link($source)||$parent===false||($parent!==$root&&!str_starts_with($parent,$root."/"))||file_exists($target)){fwrite(STDERR,"invalid move");exit(3);}if(!rename($source,$target)){fwrite(STDERR,"move failed");exit(5);}`
+const deleteFilePHP = fileGuardPHP + `$p=safePath($argv[1]);if(!file_exists($p)||$p===$root)failPath();$ok=is_dir($p)?rmdir($p):unlink($p);if(!$ok){fwrite(STDERR,"delete failed; directories must be empty");exit(5);}`
+
+const moveFilePHP = fileGuardPHP + `$source=safePath($argv[1]);$target=safePath($argv[2]);if(!file_exists($source)||!is_dir(dirname($target))||file_exists($target))failPath();if(!rename($source,$target)){fwrite(STDERR,"move failed");exit(5);}`
 
 func (w *worker) siteDir(id string) string { return filepath.Join(w.root, id) }
 
@@ -389,7 +394,7 @@ func (w *worker) updateSite(ctx context.Context, req core.UpdateRequest) error {
 	if _, err := os.Stat(filepath.Join(w.siteDir(req.Site.ID), "compose.yaml")); err != nil {
 		return err
 	}
-	return w.docker.Run(ctx, w.composeArgs(req.Site.ID, "run", "--rm", "--no-deps", "cli", "sh", "-c", wpUpdateScript)...)
+	return w.docker.Run(ctx, w.composeArgs(req.Site.ID, "run", "--rm", "--name", "wph-cli-"+req.Site.ID, "--no-deps", "cli", "sh", "-c", wpUpdateScript)...)
 }
 
 func directorySize(root string) (int64, error) {
@@ -515,7 +520,8 @@ func (w *worker) migrateLegacyNetworks(ctx context.Context) error {
 		composePath := filepath.Join(w.siteDir(id), "compose.yaml")
 		data, err := os.ReadFile(composePath)
 		if err != nil {
-			return err
+			log.Printf("skip incomplete site %s during network migration: %v", id, err)
+			continue
 		}
 		if !strings.Contains(string(data), legacyFrontendNetwork) {
 			continue
@@ -527,7 +533,7 @@ func (w *worker) migrateLegacyNetworks(ctx context.Context) error {
 		running, inspectErr := w.docker.Output(ctx, "inspect", "--format", "{{.State.Running}}", "wph-wp-"+id)
 		if inspectErr == nil && strings.TrimSpace(string(running)) == "true" {
 			if err := w.docker.Run(ctx, w.composeArgs(id, "up", "-d", "--wait")...); err != nil {
-				return fmt.Errorf("migrate site %s: %w", id, err)
+				log.Printf("migrate site %s: %v; inspect this site before restarting it", id, err)
 			}
 		}
 	}
@@ -586,7 +592,7 @@ func (w *worker) backup(ctx context.Context, req core.BackupRequest) (core.Backu
 		return core.Backup{}, err
 	}
 	volume := "wph-" + req.Site.ID + "_wordpress_data"
-	if err := w.docker.Run(ctx, "run", "--rm", "--volume", volume+":/source:ro", "--volume", tmp+":/backup", "alpine:3.22", "tar", "-czf", "/backup/wordpress.tar.gz", "-C", "/source", "."); err != nil {
+	if err := w.docker.Run(ctx, "run", "--rm", "--name", "wph-job-"+req.Site.ID, "--label", "panel4wp.role=job", "--label", "panel4wp.site="+req.Site.ID, "--volume", volume+":/source:ro", "--volume", tmp+":/backup", "alpine:3.22", "tar", "-czf", "/backup/wordpress.tar.gz", "-C", "/source", "."); err != nil {
 		return core.Backup{}, err
 	}
 	dbHash, err := fileSHA256(filepath.Join(tmp, "database.sql"))
@@ -667,7 +673,7 @@ func (w *worker) listFiles(ctx context.Context, req core.FileRequest) ([]core.Fi
 	if err := w.validateFileRequest(req, true); err != nil {
 		return nil, err
 	}
-	out, err := w.docker.Output(ctx, "exec", "wph-wp-"+req.SiteID, "php", "-d", "display_errors=stderr", "-r", listFilesPHP, req.Path)
+	out, err := w.docker.Output(ctx, "exec", "--user", "33:33", "wph-wp-"+req.SiteID, "php", "-d", "display_errors=stderr", "-d", "open_basedir=/var/www/html/wp-content", "-r", listFilesPHP, req.Path)
 	if err != nil {
 		return nil, err
 	}
@@ -682,7 +688,7 @@ func (w *worker) readFile(ctx context.Context, req core.FileRequest) (core.FileC
 	if err := w.validateFileRequest(req, false); err != nil {
 		return core.FileContent{}, err
 	}
-	out, err := w.docker.Output(ctx, "exec", "wph-wp-"+req.SiteID, "php", "-d", "display_errors=stderr", "-r", readFilePHP, req.Path)
+	out, err := w.docker.Output(ctx, "exec", "--user", "33:33", "wph-wp-"+req.SiteID, "php", "-d", "display_errors=stderr", "-d", "open_basedir=/var/www/html/wp-content", "-r", readFilePHP, req.Path)
 	if err != nil {
 		return core.FileContent{}, err
 	}
@@ -699,7 +705,7 @@ func (w *worker) writeFile(ctx context.Context, req core.FileRequest) error {
 	if len(req.Content) > 10<<20 {
 		return errors.New("file exceeds 10 MB")
 	}
-	return w.docker.Input(ctx, req.Content, "exec", "-i", "wph-wp-"+req.SiteID, "php", "-d", "display_errors=stderr", "-r", writeFilePHP, req.Path)
+	return w.docker.Input(ctx, req.Content, "exec", "-i", "--user", "33:33", "wph-wp-"+req.SiteID, "php", "-d", "display_errors=stderr", "-d", "open_basedir=/var/www/html/wp-content", "-r", writeFilePHP, req.Path)
 }
 
 func (w *worker) fileAction(ctx context.Context, req core.FileRequest, action string) error {
@@ -712,7 +718,7 @@ func (w *worker) fileAction(ctx context.Context, req core.FileRequest, action st
 	} else if action != "delete" {
 		return errors.New("invalid file action")
 	}
-	return w.docker.Run(ctx, "exec", "wph-wp-"+req.SiteID, "php", "-d", "display_errors=stderr", "-r", script, req.Path)
+	return w.docker.Run(ctx, "exec", "--user", "33:33", "wph-wp-"+req.SiteID, "php", "-d", "display_errors=stderr", "-d", "open_basedir=/var/www/html/wp-content", "-r", script, req.Path)
 }
 
 func (w *worker) moveFile(ctx context.Context, req core.FileRequest) error {
@@ -722,7 +728,7 @@ func (w *worker) moveFile(ctx context.Context, req core.FileRequest) error {
 	if !core.ValidRelativePath(req.Destination, false) || req.Destination == req.Path {
 		return errors.New("invalid move destination")
 	}
-	return w.docker.Run(ctx, "exec", "wph-wp-"+req.SiteID, "php", "-d", "display_errors=stderr", "-r", moveFilePHP, req.Path, req.Destination)
+	return w.docker.Run(ctx, "exec", "--user", "33:33", "wph-wp-"+req.SiteID, "php", "-d", "display_errors=stderr", "-d", "open_basedir=/var/www/html/wp-content", "-r", moveFilePHP, req.Path, req.Destination)
 }
 
 func (w *worker) restore(ctx context.Context, req core.RestoreRequest) error {
@@ -743,15 +749,9 @@ func (w *worker) restore(ctx context.Context, req core.RestoreRequest) error {
 	if err := w.docker.Run(ctx, w.composeArgs(id, "stop", "wordpress")...); err != nil {
 		return err
 	}
-	restart := true
-	defer func() {
-		if restart {
-			_ = w.docker.Run(context.Background(), w.composeArgs(id, "start", "wordpress")...)
-		}
-	}()
 	volume := "wph-" + id + "_wordpress_data"
 	restoreFiles := `rm -rf /target/* /target/.[!.]* /target/..?*; tar -xzf /backup/wordpress.tar.gz -C /target`
-	if err := w.docker.Run(ctx, "run", "--rm", "--volume", volume+":/target", "--volume", backupDir+":/backup:ro", "alpine:3.22", "sh", "-c", restoreFiles); err != nil {
+	if err := w.docker.Run(ctx, "run", "--rm", "--name", "wph-job-"+req.Site.ID, "--label", "panel4wp.role=job", "--label", "panel4wp.site="+req.Site.ID, "--volume", volume+":/target", "--volume", backupDir+":/backup:ro", "alpine:3.22", "sh", "-c", restoreFiles); err != nil {
 		return err
 	}
 	dbContainer := "wph-db-" + id
@@ -767,7 +767,6 @@ func (w *worker) restore(ctx context.Context, req core.RestoreRequest) error {
 	if err := w.docker.Run(ctx, w.composeArgs(id, "start", "wordpress")...); err != nil {
 		return err
 	}
-	restart = false
 	return nil
 }
 
@@ -837,7 +836,7 @@ func (w *worker) create(ctx context.Context, req core.CreateRequest) error {
 	if err := os.WriteFile(filepath.Join(w.routes, req.Site.ID+".caddy"), []byte(route), 0600); err != nil {
 		return err
 	}
-	return w.docker.Run(ctx, w.composeArgs(req.Site.ID, "run", "--rm", "--no-deps", "cli", "sh", "-c", wpInstallScript)...)
+	return w.docker.Run(ctx, w.composeArgs(req.Site.ID, "run", "--rm", "--name", "wph-cli-"+req.Site.ID, "--no-deps", "cli", "sh", "-c", wpInstallScript)...)
 }
 
 func (w *worker) action(ctx context.Context, id, action string) error {
@@ -845,6 +844,31 @@ func (w *worker) action(ctx context.Context, id, action string) error {
 		return errors.New("invalid site ID")
 	}
 	if _, err := os.Stat(filepath.Join(w.siteDir(id), "compose.yaml")); err != nil {
+		if action == "delete" && errors.Is(err, os.ErrNotExist) {
+			// A prior confirmed down can be interrupted while removing directories.
+			// Refuse to declare deletion if any containers or volumes still exist.
+			containers, checkErr := w.docker.Output(ctx, "ps", "-a", "--filter", "label=com.docker.compose.project=wph-"+id, "--format", "{{.ID}}")
+			if checkErr != nil {
+				return checkErr
+			}
+			volumes, checkErr := w.docker.Output(ctx, "volume", "ls", "--filter", "label=com.docker.compose.project=wph-"+id, "--format", "{{.Name}}")
+			if checkErr != nil {
+				return checkErr
+			}
+			if len(strings.TrimSpace(string(containers))) != 0 || len(strings.TrimSpace(string(volumes))) != 0 {
+				return errors.New("site configuration is missing but Docker resources remain; inspect the server before deleting")
+			}
+			if err := os.Remove(filepath.Join(w.routes, id+".caddy")); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+			if err := os.RemoveAll(w.siteDir(id)); err != nil {
+				return err
+			}
+			if w.backupsRoot != "" {
+				return os.RemoveAll(filepath.Join(w.backupsRoot, id))
+			}
+			return nil
+		}
 		return err
 	}
 	if action == "stop" || action == "delete" {
@@ -853,6 +877,11 @@ func (w *worker) action(ctx context.Context, id, action string) error {
 		}
 	}
 	switch action {
+	case "prepare-restore":
+		if err := w.docker.Run(ctx, w.composeArgs(id, "stop", "wordpress")...); err != nil {
+			return err
+		}
+		return w.docker.Run(ctx, w.composeArgs(id, "up", "-d", "--wait", "db")...)
 	case "start":
 		if err := w.docker.Run(ctx, w.composeArgs(id, "up", "-d", "--wait")...); err != nil {
 			return err
@@ -893,103 +922,146 @@ func (w *worker) ServeHTTP(resp http.ResponseWriter, req *http.Request) {
 	defer cancel()
 	var err error
 	var result any
+	locked := false
+	defer func() {
+		if locked {
+			w.executionMu.Unlock()
+		}
+	}()
 	reloadCaddy := false
-	if req.URL.Path == "/create" {
-		var body core.CreateRequest
-		if decodeErr := json.NewDecoder(req.Body).Decode(&body); decodeErr != nil {
-			http.Error(resp, "invalid request", http.StatusBadRequest)
+	var finishOperation func(error, any) error
+	if req.URL.Path == "/runtime" {
+		var body core.RuntimeRequest
+		if json.NewDecoder(req.Body).Decode(&body) != nil || !core.ValidID(body.SiteID) {
+			http.Error(resp, "invalid site ID", http.StatusBadRequest)
 			return
 		}
-		err = w.create(ctx, body)
-		reloadCaddy = err == nil
-	} else if req.URL.Path == "/action" {
-		var body struct{ ID, Action string }
-		if decodeErr := json.NewDecoder(req.Body).Decode(&body); decodeErr != nil {
-			http.Error(resp, "invalid request", http.StatusBadRequest)
+		if !w.executionMu.TryLock() {
+			http.Error(resp, "worker operation in progress", http.StatusConflict)
 			return
 		}
-		err = w.action(ctx, body.ID, body.Action)
-		reloadCaddy = err == nil && body.Action == "delete"
-	} else if req.URL.Path == "/backup" {
-		var body core.BackupRequest
-		if decodeErr := json.NewDecoder(req.Body).Decode(&body); decodeErr != nil {
-			http.Error(resp, "invalid request", http.StatusBadRequest)
-			return
-		}
-		result, err = w.backup(ctx, body)
-	} else if req.URL.Path == "/database" {
-		var body struct{ ID, Action string }
-		if decodeErr := json.NewDecoder(req.Body).Decode(&body); decodeErr != nil {
-			http.Error(resp, "invalid request", http.StatusBadRequest)
-			return
-		}
-		err = w.databaseAction(ctx, body.ID, body.Action)
-	} else if req.URL.Path == "/stats" {
-		var body core.StatsRequest
-		if decodeErr := json.NewDecoder(req.Body).Decode(&body); decodeErr != nil {
-			http.Error(resp, "invalid request", http.StatusBadRequest)
-			return
-		}
-		result, err = w.stats(ctx, body)
-	} else if req.URL.Path == "/update" {
-		var body core.UpdateRequest
-		if decodeErr := json.NewDecoder(req.Body).Decode(&body); decodeErr != nil {
-			http.Error(resp, "invalid request", http.StatusBadRequest)
-			return
-		}
-		err = w.updateSite(ctx, body)
-	} else if req.URL.Path == "/storage" {
-		var body core.StorageRequest
-		if decodeErr := json.NewDecoder(req.Body).Decode(&body); decodeErr != nil {
-			http.Error(resp, "invalid request", http.StatusBadRequest)
-			return
-		}
-		result, err = w.storage(ctx, body)
-	} else if req.URL.Path == "/mail" {
-		var body settings.ApplyRequest
-		if decodeErr := json.NewDecoder(req.Body).Decode(&body); decodeErr != nil {
-			http.Error(resp, "invalid request", http.StatusBadRequest)
-			return
-		}
-		err = w.applyMail(ctx, body)
-	} else if req.URL.Path == "/restore" {
-		var body core.RestoreRequest
-		if decodeErr := json.NewDecoder(req.Body).Decode(&body); decodeErr != nil {
-			http.Error(resp, "invalid request", http.StatusBadRequest)
-			return
-		}
-		err = w.restore(ctx, body)
-	} else if req.URL.Path == "/backup/delete" {
-		var body core.DeleteBackupRequest
-		if decodeErr := json.NewDecoder(req.Body).Decode(&body); decodeErr != nil {
-			http.Error(resp, "invalid request", http.StatusBadRequest)
-			return
-		}
-		err = w.deleteBackup(body)
-	} else if req.URL.Path == "/files/list" || req.URL.Path == "/files/read" || req.URL.Path == "/files/write" || req.URL.Path == "/files/delete" || req.URL.Path == "/files/mkdir" || req.URL.Path == "/files/move" {
-		var body core.FileRequest
-		if decodeErr := json.NewDecoder(req.Body).Decode(&body); decodeErr != nil {
-			http.Error(resp, "invalid request", http.StatusBadRequest)
-			return
-		}
-		switch req.URL.Path {
-		case "/files/list":
-			result, err = w.listFiles(ctx, body)
-		case "/files/read":
-			result, err = w.readFile(ctx, body)
-		case "/files/write":
-			err = w.writeFile(ctx, body)
-		case "/files/delete":
-			err = w.fileAction(ctx, body, "delete")
-		case "/files/mkdir":
-			err = w.fileAction(ctx, body, "mkdir")
-		case "/files/move":
-			err = w.moveFile(ctx, body)
-		}
+		locked = true
+		result, err = w.runtime(ctx, body.SiteID)
 	} else {
-		http.NotFound(resp, req)
-		return
+		if !w.executionMu.TryLock() {
+			http.Error(resp, "worker operation in progress", http.StatusConflict)
+			return
+		}
+		locked = true
+		if operationID := req.Header.Get("X-Operation-ID"); operationID != "" {
+			finish, beginErr := w.trackOperation(req, operationID)
+			if beginErr != nil {
+				http.Error(resp, "cannot record operation: "+beginErr.Error(), http.StatusConflict)
+				return
+			}
+			finishOperation = finish
+		}
+		if req.URL.Path == "/create" {
+			var body core.CreateRequest
+			if decodeErr := json.NewDecoder(req.Body).Decode(&body); decodeErr != nil {
+				http.Error(resp, "invalid request", http.StatusBadRequest)
+				return
+			}
+			err = w.create(ctx, body)
+			reloadCaddy = err == nil
+		} else if req.URL.Path == "/action" {
+			var body struct{ ID, Action string }
+			if decodeErr := json.NewDecoder(req.Body).Decode(&body); decodeErr != nil {
+				http.Error(resp, "invalid request", http.StatusBadRequest)
+				return
+			}
+			err = w.action(ctx, body.ID, body.Action)
+			reloadCaddy = err == nil && body.Action == "delete"
+		} else if req.URL.Path == "/backup" {
+			var body core.BackupRequest
+			if decodeErr := json.NewDecoder(req.Body).Decode(&body); decodeErr != nil {
+				http.Error(resp, "invalid request", http.StatusBadRequest)
+				return
+			}
+			result, err = w.backup(ctx, body)
+		} else if req.URL.Path == "/database" {
+			var body struct{ ID, Action string }
+			if decodeErr := json.NewDecoder(req.Body).Decode(&body); decodeErr != nil {
+				http.Error(resp, "invalid request", http.StatusBadRequest)
+				return
+			}
+			err = w.databaseAction(ctx, body.ID, body.Action)
+		} else if req.URL.Path == "/stats" {
+			var body core.StatsRequest
+			if decodeErr := json.NewDecoder(req.Body).Decode(&body); decodeErr != nil {
+				http.Error(resp, "invalid request", http.StatusBadRequest)
+				return
+			}
+			result, err = w.stats(ctx, body)
+		} else if req.URL.Path == "/update" {
+			var body core.UpdateRequest
+			if decodeErr := json.NewDecoder(req.Body).Decode(&body); decodeErr != nil {
+				http.Error(resp, "invalid request", http.StatusBadRequest)
+				return
+			}
+			err = w.updateSite(ctx, body)
+		} else if req.URL.Path == "/storage" {
+			var body core.StorageRequest
+			if decodeErr := json.NewDecoder(req.Body).Decode(&body); decodeErr != nil {
+				http.Error(resp, "invalid request", http.StatusBadRequest)
+				return
+			}
+			result, err = w.storage(ctx, body)
+		} else if req.URL.Path == "/mail" {
+			var body settings.ApplyRequest
+			if decodeErr := json.NewDecoder(req.Body).Decode(&body); decodeErr != nil {
+				http.Error(resp, "invalid request", http.StatusBadRequest)
+				return
+			}
+			err = w.applyMail(ctx, body)
+		} else if req.URL.Path == "/restore" {
+			var body core.RestoreRequest
+			if decodeErr := json.NewDecoder(req.Body).Decode(&body); decodeErr != nil {
+				http.Error(resp, "invalid request", http.StatusBadRequest)
+				return
+			}
+			err = w.restore(ctx, body)
+		} else if req.URL.Path == "/backup/delete" {
+			var body core.DeleteBackupRequest
+			if decodeErr := json.NewDecoder(req.Body).Decode(&body); decodeErr != nil {
+				http.Error(resp, "invalid request", http.StatusBadRequest)
+				return
+			}
+			err = w.deleteBackup(body)
+		} else if req.URL.Path == "/files/list" || req.URL.Path == "/files/read" || req.URL.Path == "/files/write" || req.URL.Path == "/files/delete" || req.URL.Path == "/files/mkdir" || req.URL.Path == "/files/move" {
+			var body core.FileRequest
+			if decodeErr := json.NewDecoder(req.Body).Decode(&body); decodeErr != nil {
+				http.Error(resp, "invalid request", http.StatusBadRequest)
+				return
+			}
+			switch req.URL.Path {
+			case "/files/list":
+				result, err = w.listFiles(ctx, body)
+			case "/files/read":
+				result, err = w.readFile(ctx, body)
+			case "/files/write":
+				err = w.writeFile(ctx, body)
+			case "/files/delete":
+				err = w.fileAction(ctx, body, "delete")
+			case "/files/mkdir":
+				err = w.fileAction(ctx, body, "mkdir")
+			case "/files/move":
+				err = w.moveFile(ctx, body)
+			}
+		} else {
+			http.NotFound(resp, req)
+			return
+		}
 	}
+	if finishOperation != nil {
+		if receiptErr := finishOperation(err, result); receiptErr != nil && err == nil {
+			err = fmt.Errorf("operation completed but receipt could not be saved: %w", receiptErr)
+		}
+	}
+	if locked {
+		w.executionMu.Unlock()
+		locked = false
+	} // make the committed result inspectable before sending it
 	if err != nil {
 		log.Printf("worker operation failed: %v", err)
 		http.Error(resp, err.Error(), http.StatusInternalServerError)
@@ -1036,8 +1108,15 @@ func main() {
 	w := &worker{root: filepath.Join(dataDir, "sites"), backupsRoot: filepath.Join(dataDir, "backups"), routes: "/routes", token: token, panelDomain: panelDomain, docker: dockerRunner{}, toolTimers: make(map[string]*time.Timer)}
 	migrateCtx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
+	if err := w.recoverInterruptedJobs(migrateCtx); err != nil {
+		log.Fatal(err)
+	}
 	if err := w.migrateLegacyNetworks(migrateCtx); err != nil {
 		log.Fatal(err)
 	}
-	log.Fatal(http.ListenAndServe(":8081", w))
+	if err := w.removeStaleDatabaseTools(migrateCtx); err != nil {
+		log.Fatal(err)
+	}
+	server := &http.Server{Addr: ":8081", Handler: w, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
+	log.Fatal(server.ListenAndServe())
 }

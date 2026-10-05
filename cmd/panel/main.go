@@ -12,7 +12,6 @@ import (
 	"io"
 	"log"
 	"mime"
-	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -373,27 +372,35 @@ func (a *app) loginAllowed(ip string) bool {
 			kept = append(kept, t)
 		}
 	}
-	a.loginFails[ip] = kept
-	return len(kept) < 8
-}
-
-func (a *app) recordFailure(ip string) {
-	a.loginMu.Lock()
-	defer a.loginMu.Unlock()
-	a.loginFails[ip] = append(a.loginFails[ip], time.Now())
+	if len(kept) >= 8 {
+		a.loginFails[ip] = kept
+		return false
+	}
+	if a.loginFails == nil {
+		a.loginFails = make(map[string][]time.Time)
+	}
+	a.loginFails[ip] = append(kept, time.Now()) // reserve before the expensive password check
+	return true
 }
 
 func (a *app) callWorker(path string, body, result any) error {
+	return a.callWorkerContext(context.Background(), path, body, result, "")
+}
+
+func (a *app) callWorkerContext(ctx context.Context, path string, body, result any, operationID string) error {
 	b, err := json.Marshal(body)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequest(http.MethodPost, a.workerURL+path, bytes.NewReader(b))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.workerURL+path, bytes.NewReader(b))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Worker-Token", a.workerToken)
+	if operationID != "" {
+		req.Header.Set("X-Operation-ID", operationID)
+	}
 	resp, err := a.client.Do(req)
 	if err != nil {
 		return err
@@ -405,7 +412,7 @@ func (a *app) callWorker(path string, body, result any) error {
 	}
 	if resp.StatusCode != expected {
 		message, _ := io.ReadAll(io.LimitReader(resp.Body, 2000))
-		return fmt.Errorf("worker: %s", strings.TrimSpace(string(message)))
+		return &workerResponseError{status: resp.StatusCode, message: strings.TrimSpace(string(message))}
 	}
 	if result != nil {
 		return json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(result)
@@ -441,6 +448,8 @@ func (a *app) proxyDatabase(w http.ResponseWriter, r *http.Request) {
 	proxy.Director = func(req *http.Request) {
 		originalDirector(req)
 		removePanelCookies(req)
+		req.Header.Del("X-Panel-Proxy-Token")
+		req.Header.Del("X-Panel-Client-IP")
 		req.URL.Path = strings.TrimPrefix(req.URL.Path, prefix)
 		if req.URL.Path == "" {
 			req.URL.Path = "/"
@@ -493,16 +502,18 @@ func (a *app) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodPost && r.URL.Path == "/login" {
-		ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+		ip := a.loginClientIP(r)
 		if !a.loginAllowed(ip) {
 			http.Error(w, "too many attempts", http.StatusTooManyRequests)
 			return
 		}
 		if r.ParseForm() != nil || bcrypt.CompareHashAndPassword(a.adminHash, []byte(r.FormValue("password"))) != nil {
-			a.recordFailure(ip)
 			a.render(w, r, view{Error: i18n.T(i18n.Resolve(r), "invalid_password")})
 			return
 		}
+		a.loginMu.Lock()
+		delete(a.loginFails, ip)
+		a.loginMu.Unlock()
 		expiry := time.Now().Add(8 * time.Hour)
 		payload := strconv.FormatInt(expiry.Unix(), 10)
 		http.SetCookie(w, &http.Cookie{Name: "wph_session", Value: payload + "." + a.sign(payload), Path: "/", HttpOnly: true, Secure: a.secureCookie, SameSite: http.SameSiteStrictMode, Expires: expiry})
@@ -551,6 +562,15 @@ func (a *app) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/logout" {
 		http.SetCookie(w, &http.Cookie{Name: "wph_session", Path: "/", MaxAge: -1, HttpOnly: true, Secure: a.secureCookie})
 		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+	if r.URL.Path == "/reconcile" {
+		target := safeLanguageNext(r.URL.Query().Get("next"))
+		if err := a.reconcileRuntime(r.Context()); err != nil {
+			a.redirectWithFlashTo(w, r, target, "", err.Error())
+		} else {
+			a.redirectWithFlashTo(w, r, target, i18n.T(i18n.Resolve(r), "status_refreshed"), "")
+		}
 		return
 	}
 	if r.URL.Path == "/sites" {
@@ -626,14 +646,14 @@ func (a *app) createSite(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unable to save site", http.StatusInternalServerError)
 		return
 	}
-	if err := a.callWorker("/create", core.CreateRequest{Site: site, DBPassword: dbPassword, AdminPassword: adminPassword}, nil); err != nil {
+	if err := a.callTracked(&site, "create", "/create", core.CreateRequest{Site: site, DBPassword: dbPassword, AdminPassword: adminPassword}, nil); err != nil {
 		site.Status, site.Error = core.StatusFailed, err.Error()
 		_ = a.store.Put(site)
 		a.render(w, r, view{LoggedIn: true, Error: "Site creation failed: " + err.Error()})
 		a.record("create", site, false, err.Error())
 		return
 	}
-	site.Status = core.StatusRunning
+	site.Status, site.Error, site.HealthError = core.StatusRunning, "", ""
 	if err := a.store.Put(site); err != nil {
 		http.Error(w, "site created but status could not be saved", http.StatusInternalServerError)
 		return
@@ -655,6 +675,10 @@ func (a *app) siteAction(w http.ResponseWriter, r *http.Request) {
 	site, ok, err := a.store.Get(id)
 	if err != nil || !ok {
 		http.NotFound(w, r)
+		return
+	}
+	if site.Operation != nil && site.Operation.State == "pending" {
+		http.Error(w, "An operation is unresolved. Refresh service status before trying again.", http.StatusConflict)
 		return
 	}
 	if action == "upload" || action == "download" || action == "mkdir" || action == "file-delete" || action == "file-move" {
@@ -684,7 +708,10 @@ func (a *app) siteAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		site.MailEnabled = enabled
-		_ = a.store.Put(site)
+		if saveErr := a.store.Put(site); saveErr != nil {
+			http.Error(w, "unable to save site operation", http.StatusInternalServerError)
+			return
+		}
 		a.record(action, site, true, "")
 		a.redirectWithFlashTo(w, r, "/sites/"+site.ID, "Outgoing mail settings updated for "+site.Domain, "")
 		return
@@ -725,11 +752,17 @@ func (a *app) siteAction(w http.ResponseWriter, r *http.Request) {
 		dbPassword, _ := core.RandomPassword()
 		adminPassword, _ := core.RandomPassword()
 		site.Status, site.Error = core.StatusCreating, ""
-		_ = a.store.Put(site)
-		err = a.callWorker("/create", core.CreateRequest{Site: site, DBPassword: dbPassword, AdminPassword: adminPassword}, nil)
+		if saveErr := a.store.Put(site); saveErr != nil {
+			http.Error(w, "unable to save site operation", http.StatusInternalServerError)
+			return
+		}
+		err = a.callTracked(&site, "create", "/create", core.CreateRequest{Site: site, DBPassword: dbPassword, AdminPassword: adminPassword}, nil)
 		if err == nil {
-			site.Status = core.StatusRunning
-			_ = a.store.Put(site)
+			site.Status, site.Error, site.HealthError = core.StatusRunning, "", ""
+			if saveErr := a.store.Put(site); saveErr != nil {
+				http.Error(w, "unable to save site operation", http.StatusInternalServerError)
+				return
+			}
 			a.record("retry", site, true, "")
 			a.redirectWithFlashTo(w, r, "/sites/"+site.ID, "Site creation retried. WordPress username: admin. New password (save now): "+adminPassword, "")
 			return
@@ -737,18 +770,30 @@ func (a *app) siteAction(w http.ResponseWriter, r *http.Request) {
 	} else {
 		if action == "delete" {
 			site.Status = core.StatusDeleting
-			_ = a.store.Put(site)
+			if saveErr := a.store.Put(site); saveErr != nil {
+				http.Error(w, "unable to save site operation", http.StatusInternalServerError)
+				return
+			}
 		}
-		err = a.callWorker("/action", map[string]string{"id": id, "action": action}, nil)
+		err = a.callTracked(&site, action, "/action", map[string]string{"id": id, "action": action}, nil)
 		if err == nil {
 			if action == "delete" {
-				_ = a.store.Delete(id)
+				if saveErr := a.store.Delete(id); saveErr != nil {
+					http.Error(w, "site deleted but metadata could not be saved", http.StatusInternalServerError)
+					return
+				}
 			} else if action == "stop" {
-				site.Status = core.StatusStopped
-				_ = a.store.Put(site)
+				site.Status, site.Error, site.HealthError = core.StatusStopped, "", ""
+				if saveErr := a.store.Put(site); saveErr != nil {
+					http.Error(w, "unable to save site operation", http.StatusInternalServerError)
+					return
+				}
 			} else {
-				site.Status = core.StatusRunning
-				_ = a.store.Put(site)
+				site.Status, site.Error, site.HealthError = core.StatusRunning, "", ""
+				if saveErr := a.store.Put(site); saveErr != nil {
+					http.Error(w, "unable to save site operation", http.StatusInternalServerError)
+					return
+				}
 			}
 			if action == "start" && site.MailEnabled {
 				if mailErr := a.applySiteMail(site, true); mailErr != nil {
@@ -764,8 +809,14 @@ func (a *app) siteAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	site.Status, site.Error = core.StatusFailed, err.Error()
-	_ = a.store.Put(site)
+	site.Status, site.Error = core.StatusUnhealthy, err.Error()
+	if action == "retry" {
+		site.Status = core.StatusFailed
+	}
+	if saveErr := a.store.Put(site); saveErr != nil {
+		http.Error(w, "unable to save site operation", http.StatusInternalServerError)
+		return
+	}
 	a.record(action, site, false, err.Error())
 	a.render(w, r, view{LoggedIn: true, Error: err.Error()})
 }
@@ -775,7 +826,7 @@ func (a *app) backupSite(w http.ResponseWriter, r *http.Request, site core.Site)
 		http.Error(w, "site must be running", http.StatusConflict)
 		return
 	}
-	backup, err := a.performBackup(site, core.BackupSourceManual, time.Now())
+	backup, err := a.performBackup(&site, core.BackupSourceManual, time.Now())
 	if err != nil {
 		a.record("backup", site, false, err.Error())
 		a.render(w, r, view{LoggedIn: true, Error: "Backup failed: " + err.Error()})
@@ -783,7 +834,6 @@ func (a *app) backupSite(w http.ResponseWriter, r *http.Request, site core.Site)
 	}
 	site.Backups = append(site.Backups, backup)
 	if err := a.store.Put(site); err != nil {
-		_ = a.callWorker("/backup/delete", core.DeleteBackupRequest{SiteID: site.ID, BackupID: backup.ID}, nil)
 		http.Error(w, "backup completed but metadata could not be saved", http.StatusInternalServerError)
 		return
 	}
@@ -791,13 +841,13 @@ func (a *app) backupSite(w http.ResponseWriter, r *http.Request, site core.Site)
 	a.redirectWithFlashTo(w, r, "/sites/"+site.ID+"/backups", "Backup completed and verified", "")
 }
 
-func (a *app) performBackup(site core.Site, source string, now time.Time) (core.Backup, error) {
+func (a *app) performBackup(site *core.Site, source string, now time.Time) (core.Backup, error) {
 	id, err := core.NewBackupID(now)
 	if err != nil {
 		return core.Backup{}, errors.New("unable to generate backup ID")
 	}
 	var backup core.Backup
-	if err := a.callWorker("/backup", core.BackupRequest{Site: site, BackupID: id}, &backup); err != nil {
+	if err := a.callTracked(site, source+"-backup", "/backup", core.BackupRequest{Site: *site, BackupID: id}, &backup); err != nil {
 		return core.Backup{}, err
 	}
 	backup.Source = source
@@ -863,7 +913,7 @@ func (a *app) runScheduledBackups(now time.Time) {
 		}
 		a.opsMu.Lock()
 		site, ok, getErr := a.store.Get(candidate.ID)
-		if getErr == nil && ok && site.BackupPolicy.Enabled && !site.BackupPolicy.NextRunAt.After(now) {
+		if getErr == nil && ok && !operationPending(site) && site.HealthError == "" && site.BackupPolicy.Enabled && !site.BackupPolicy.NextRunAt.After(now) {
 			a.runScheduledBackup(site, now)
 		}
 		a.opsMu.Unlock()
@@ -881,7 +931,7 @@ func (a *app) runScheduledBackup(site core.Site, now time.Time) {
 		a.record("scheduled-backup", site, false, policy.LastError)
 		return
 	}
-	backup, err := a.performBackup(site, core.BackupSourceScheduled, now)
+	backup, err := a.performBackup(&site, core.BackupSourceScheduled, now)
 	if err != nil {
 		policy.LastError = truncateText(err.Error(), 500)
 		site.BackupPolicy = policy
@@ -893,7 +943,6 @@ func (a *app) runScheduledBackup(site core.Site, now time.Time) {
 	site.BackupPolicy = policy
 	site.Backups = append(site.Backups, backup)
 	if err := a.store.Put(site); err != nil {
-		_ = a.callWorker("/backup/delete", core.DeleteBackupRequest{SiteID: site.ID, BackupID: backup.ID}, nil)
 		a.record("scheduled-backup", site, false, "metadata: "+err.Error())
 		return
 	}
@@ -1002,7 +1051,7 @@ func (a *app) updateSite(w http.ResponseWriter, r *http.Request, site core.Site)
 		return
 	}
 	var safety core.Backup
-	if err := a.callWorker("/backup", core.BackupRequest{Site: site, BackupID: backupID}, &safety); err != nil {
+	if err := a.callTracked(&site, "safety-backup", "/backup", core.BackupRequest{Site: site, BackupID: backupID}, &safety); err != nil {
 		a.record("update", site, false, err.Error())
 		a.render(w, r, view{LoggedIn: true, Error: "Update stopped because the safety backup failed: " + err.Error()})
 		return
@@ -1013,9 +1062,13 @@ func (a *app) updateSite(w http.ResponseWriter, r *http.Request, site core.Site)
 		a.render(w, r, view{LoggedIn: true, Error: "Update stopped because safety backup metadata could not be saved"})
 		return
 	}
-	if err := a.callWorker("/update", core.UpdateRequest{Site: site}, nil); err != nil {
+	if err := a.callTracked(&site, "update", "/update", core.UpdateRequest{Site: site}, nil); err != nil {
 		a.record("update", site, false, err.Error())
 		a.render(w, r, view{LoggedIn: true, Error: "WordPress update failed. Safety backup retained: " + backupID + ". " + err.Error()})
+		return
+	}
+	if err := a.store.Put(site); err != nil {
+		http.Error(w, "operation completed but metadata could not be saved", http.StatusInternalServerError)
 		return
 	}
 	a.record("update", site, true, "safety backup "+backupID)
@@ -1023,8 +1076,8 @@ func (a *app) updateSite(w http.ResponseWriter, r *http.Request, site core.Site)
 }
 
 func (a *app) restoreSite(w http.ResponseWriter, r *http.Request, site core.Site) {
-	if site.Status != core.StatusRunning {
-		http.Error(w, "site must be running", http.StatusConflict)
+	if site.Status != core.StatusRunning && site.Status != core.StatusStopped && site.Status != core.StatusUnhealthy {
+		http.Error(w, "site services cannot be restored in the current state", http.StatusConflict)
 		return
 	}
 	if r.FormValue("confirm") != site.Domain {
@@ -1048,8 +1101,13 @@ func (a *app) restoreSite(w http.ResponseWriter, r *http.Request, site core.Site
 		http.Error(w, "unable to generate safety backup ID", http.StatusInternalServerError)
 		return
 	}
+	if err := a.callTracked(&site, "restore-prepare", "/action", map[string]string{"id": site.ID, "action": "prepare-restore"}, nil); err != nil {
+		a.render(w, r, view{LoggedIn: true, Error: "Restore preparation failed: " + err.Error()})
+		return
+	}
+	site.Status = core.StatusStopped
 	var safety core.Backup
-	if err := a.callWorker("/backup", core.BackupRequest{Site: site, BackupID: safetyID}, &safety); err != nil {
+	if err := a.callTracked(&site, "safety-backup", "/backup", core.BackupRequest{Site: site, BackupID: safetyID}, &safety); err != nil {
 		a.render(w, r, view{LoggedIn: true, Error: "Restore stopped because the safety backup failed: " + err.Error()})
 		return
 	}
@@ -1059,9 +1117,14 @@ func (a *app) restoreSite(w http.ResponseWriter, r *http.Request, site core.Site
 		a.render(w, r, view{LoggedIn: true, Error: "Restore stopped because safety backup metadata could not be saved"})
 		return
 	}
-	if err := a.callWorker("/restore", core.RestoreRequest{Site: site, BackupID: backupID, SafetyBackupID: safetyID}, nil); err != nil {
+	if err := a.callTracked(&site, "restore", "/restore", core.RestoreRequest{Site: site, BackupID: backupID, SafetyBackupID: safetyID}, nil); err != nil {
 		a.record("restore", site, false, err.Error())
 		a.render(w, r, view{LoggedIn: true, Error: "Restore failed. A safety backup was retained: " + safetyID + ". " + err.Error()})
+		return
+	}
+	site.Status, site.Error = core.StatusRunning, ""
+	if err := a.store.Put(site); err != nil {
+		http.Error(w, "operation completed but metadata could not be saved", http.StatusInternalServerError)
 		return
 	}
 	a.record("restore", site, true, backupID)
@@ -1300,7 +1363,7 @@ func (a *app) saveMailSettings(w http.ResponseWriter, r *http.Request) {
 	sites, _ := a.store.List()
 	failed := 0
 	for _, site := range sites {
-		if site.Status != core.StatusRunning || !site.MailEnabled {
+		if site.Status != core.StatusRunning || operationPending(site) || !site.MailEnabled {
 			continue
 		}
 		if err := a.applySiteMail(site, mail.Enabled); err != nil {
@@ -1343,18 +1406,10 @@ func main() {
 		log.Fatal(err)
 	}
 	app := &app{store: store.New("/data/sites.json"), settings: settingsStore, audit: audit.New("/data/audit.jsonl"), workerURL: "http://worker:8081", workerToken: token, adminHash: []byte(hash), sessionKey: []byte(key), secureCookie: !strings.HasPrefix(panelDomain, "http://localhost") && !strings.HasPrefix(panelDomain, "http://127.0.0.1"), client: &http.Client{Timeout: 20*time.Minute + 10*time.Second}, loginFails: make(map[string][]time.Time), flashes: make(map[string]flash)}
-	sites, err := app.store.List()
-	if err != nil {
+	if _, err := app.store.List(); err != nil {
 		log.Fatal(err)
 	}
-	for _, site := range sites {
-		if site.Status == core.StatusCreating || site.Status == core.StatusDeleting {
-			site.Status, site.Error = core.StatusFailed, "Operation interrupted; inspect server and retry"
-			if err := app.store.Put(site); err != nil {
-				log.Fatal(err)
-			}
-		}
-	}
+	go app.runRuntimeReconciler(context.Background(), 30*time.Second)
 	go app.runBackupScheduler(context.Background(), time.Minute)
 	server := &http.Server{Addr: ":8080", Handler: app, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 21 * time.Minute, IdleTimeout: 60 * time.Second}
 	log.Println("panel listening on :8080")

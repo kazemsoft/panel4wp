@@ -14,26 +14,30 @@ import (
 type Status string
 
 const (
-	StatusCreating Status = "creating"
-	StatusRunning  Status = "running"
-	StatusStopped  Status = "stopped"
-	StatusFailed   Status = "failed"
-	StatusDeleting Status = "deleting"
+	StatusCreating  Status = "creating"
+	StatusRunning   Status = "running"
+	StatusStopped   Status = "stopped"
+	StatusFailed    Status = "failed"
+	StatusDeleting  Status = "deleting"
+	StatusUnhealthy Status = "unhealthy"
 )
 
 type Site struct {
-	ID           string       `json:"id"`
-	Domain       string       `json:"domain"`
-	Title        string       `json:"title"`
-	AdminEmail   string       `json:"admin_email"`
-	MemoryMB     int          `json:"memory_mb,omitempty"`
-	CPUs         float64      `json:"cpus,omitempty"`
-	Status       Status       `json:"status"`
-	Error        string       `json:"error,omitempty"`
-	CreatedAt    time.Time    `json:"created_at"`
-	Backups      []Backup     `json:"backups,omitempty"`
-	BackupPolicy BackupPolicy `json:"backup_policy,omitempty"`
-	MailEnabled  bool         `json:"mail_enabled,omitempty"`
+	ID              string       `json:"id"`
+	Domain          string       `json:"domain"`
+	Title           string       `json:"title"`
+	AdminEmail      string       `json:"admin_email"`
+	MemoryMB        int          `json:"memory_mb,omitempty"`
+	CPUs            float64      `json:"cpus,omitempty"`
+	Status          Status       `json:"status"`
+	Error           string       `json:"error,omitempty"`
+	CreatedAt       time.Time    `json:"created_at"`
+	Backups         []Backup     `json:"backups,omitempty"`
+	BackupPolicy    BackupPolicy `json:"backup_policy,omitempty"`
+	MailEnabled     bool         `json:"mail_enabled,omitempty"`
+	Operation       *Operation   `json:"operation,omitempty"`
+	HealthError     string       `json:"health_error,omitempty"`
+	HealthCheckedAt time.Time    `json:"health_checked_at,omitempty"`
 }
 
 type Backup struct {
@@ -251,4 +255,23 @@ func ResourceLimits(s Site) (int, float64) {
 		cpus = 1
 	}
 	return memory, cpus
+}
+
+// Operation is a durable receipt. Pending operations are never replayed automatically.
+type Operation struct {
+	ID         string    `json:"id"`
+	Kind       string    `json:"kind"`
+	State      string    `json:"state"`
+	StartedAt  time.Time `json:"started_at"`
+	FinishedAt time.Time `json:"finished_at,omitempty"`
+	Error      string    `json:"error,omitempty"`
+	Backup     *Backup   `json:"backup,omitempty"`
+}
+type RuntimeRequest struct {
+	SiteID string `json:"site_id"`
+}
+type SiteRuntime struct {
+	Status    Status     `json:"status"`
+	Detail    string     `json:"detail,omitempty"`
+	Operation *Operation `json:"operation,omitempty"`
 }

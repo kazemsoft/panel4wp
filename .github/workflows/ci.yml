@@ -19,6 +19,7 @@ jobs:
           cache-dependency-path: go.sum
       - run: go generate ./cmd/panel
       - run: git diff --exit-code -- cmd/panel/views_templ.go
+      - run: php --version
       - run: go test -race ./...
       - run: go vet ./...
       - run: docker compose config --quiet

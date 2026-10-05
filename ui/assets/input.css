@@ -134,3 +134,6 @@
   .file-toolbar{padding:11px 12px}.file-toolbar .button-label{display:none}.file-toolbar button{padding:8px}
   .file-location{align-items:stretch;flex-direction:column}.file-location .button{align-self:flex-start}
 }
+
+.badge.unhealthy, .badge.unknown { background: #fff4df; color: #855600; }
+.badge.busy { background: #eceeff; color: #464edb; }

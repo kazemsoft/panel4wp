@@ -114,7 +114,7 @@ The same refresh measures the real disk space occupied by each site's WordPress 
 
 The **Back up and update WordPress** action first creates and records a verified safety backup. It then updates WordPress core, runs database migrations, and updates all plugins and themes through the site's isolated WP-CLI service. The safety backup remains available for an in-place restore if an extension update causes a regression.
 
-Each running site has a browser file manager restricted to its `wp-content` directory. It can browse directories, upload and download files up to 10 MB, create directories, move entries, delete files, and remove empty directories. Rows can be selected from the table or opened through a context menu. It refuses unsafe relative paths and does not allow operations on symbolic links.
+Each running site has a browser file manager restricted to its `wp-content` directory. It can browse directories, upload and download files up to 10 MB, create directories, move entries, delete files, and remove empty directories. Rows can be selected from the table or opened through a context menu. It refuses unsafe relative paths and symbolic links, runs as the WordPress user, and constrains PHP filesystem access. Writes use a temporary file and atomic replacement. Directory listings are limited to 5,000 entries.
 
 Each running site also has an on-demand phpMyAdmin database manager. It uses the site's restricted WordPress database account, is reachable only through the authenticated panel, publishes no host port, and is automatically removed after 15 minutes. Opening it again starts a fresh 15-minute session. The proxy removes panel session cookies before forwarding requests to phpMyAdmin.
 
@@ -137,6 +137,8 @@ Deleting a site removes its containers, Docker volumes, local backups, and all c
 - phpMyAdmin joins only the selected site's private database network and a private tools proxy network shared with the panel. It is disabled by default and starts through a Compose profile on demand.
 
 The installer, panel, worker, and Caddy are Apache-2.0 licensed. WordPress, MariaDB, Caddy, and their container images retain their own upstream licenses.
+
+Long site operations persist a receipt before starting. The panel checks actual WordPress/database container state on startup and every 30 seconds, with a manual **Refresh service status** action. Unconfirmed requests remain blocked until the worker receipt is checked. Interrupted creation offers a retry with a new administrator password; interrupted restore/update requires inspecting the site and using the retained safety backup when necessary. Failed restores keep WordPress stopped. Worker startup closes previous phpMyAdmin sessions. See [restart recovery](docs/RECOVERY.md).
 
 Successful long-running operations use Post/Redirect/Get with one-time in-memory result messages. This prevents Caddy route updates from interrupting the administrator response and avoids putting generated WordPress passwords in URLs or persistent metadata.
 

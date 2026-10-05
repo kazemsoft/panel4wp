@@ -158,7 +158,7 @@ func TestUpdateSiteUsesIsolatedCLI(t *testing.T) {
 		t.Fatal(err)
 	}
 	call := strings.Join(f.calls[0], " ")
-	if !strings.Contains(call, "run --rm --no-deps cli sh -c") || !strings.Contains(call, "wp core update-db") || !strings.Contains(call, "wp plugin update --all") || !strings.Contains(call, "wp theme update --all") {
+	if !strings.Contains(call, "run --rm --name wph-cli-0123456789abcdef --no-deps cli sh -c") || !strings.Contains(call, "wp core update-db") || !strings.Contains(call, "wp plugin update --all") || !strings.Contains(call, "wp theme update --all") {
 		t.Fatalf("unexpected update command: %s", call)
 	}
 }

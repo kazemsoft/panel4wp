@@ -2,7 +2,19 @@
 
 The project is intentionally split into a safe single administrator product first and a multi customer hosting platform later. A milestone is complete only when its acceptance checks pass on a clean Linux host.
 
-## Milestone 0 — executable proof (current)
+## Approved development order
+
+The administrator approved this order on 2026-10-05. Complete and test each step before moving to the next:
+
+1. **Service reliability and restart recovery:** Docker runtime reconciliation, durable receipts for long site operations, interrupted-operation recovery guidance, and restart-safe database tool sessions. Implemented with focused restart and security regression tests; live Docker checks are recorded in `docs/RECOVERY.md`. Fresh Linux VM/host reboot acceptance remains part of step 5.
+2. **Resources and capacity:** edit CPU/RAM after creation, custom resource plans, pre-provisioning capacity checks, and hard disk quotas.
+3. **File and site administration:** file creation/editing/copy/rename, bulk and archive operations, SFTP keys, domain changes, PHP settings, maintenance mode, and site logs.
+4. **Remote backups and alerts:** off-host backup copies, encryption, restore into a new site, and notifications for backup failures, low capacity, and service/certificate problems.
+5. **Release packaging and fresh VM tests:** versioned AMD64/ARM64 images, upgrade/rollback and data migration workflows, data-preserving uninstall, and installation/recovery tests on fresh Debian/Ubuntu VMs.
+
+Multi-customer accounts, wallet/payments, multiple hosts, and AI editing remain a separate later phase.
+
+## Milestone 0 — executable proof
 
 - One administrator login with rate limiting, signed sessions, and CSRF checks
 - Create one isolated WordPress and MariaDB Compose project per site
@@ -16,11 +28,11 @@ Exit checks: a clean install creates a working local and public site; start/stop
 ## Milestone 1 — usable single administrator MVP
 
 1. **Backups and restore:** on-demand and scheduled checksum-verified backups, retention, and in-place restore are complete. Remaining: off-host copies, encryption, and restore to a new site ID.
-2. **File access:** browser file manager constrained to `wp-content` is complete for files up to 10 MB. Remaining: per-site SFTP using public keys, archive extraction, bulk operations, and an audit log.
-3. **Database tools:** an on-demand Adminer or phpMyAdmin container behind the authenticated panel, with a short lived route and credentials. It stays stopped when unused.
+2. **File access:** browser file manager constrained to `wp-content` is complete for files up to 10 MB. Remaining: per-site SFTP using public keys, archive extraction, bulk operations, and detailed file-operation audit events.
+3. **Database tools:** the on-demand phpMyAdmin manager behind the authenticated panel is complete, with a 15-minute session and startup cleanup.
 4. **Resource controls:** creation-time CPU, memory, and process limits are complete. Remaining: storage quotas, custom plans, edits after creation, and host capacity validation.
-5. **Site operations:** domain change, PHP settings, WordPress/plugin/theme updates, maintenance mode, logs, and health state reconciliation after host restarts.
-6. **Host operations:** disk/RAM overview, image updates, certificate and backup alerts, audit log, password rotation, and recovery workflow.
+5. **Site operations:** domain change, PHP settings, maintenance mode and logs remain. WordPress/plugin/theme updates with safety backups and runtime reconciliation are implemented.
+6. **Host operations:** disk/RAM overview, image updates, certificate and backup alerts, password rotation, and recovery workflow.
 7. **Packaging:** versioned images, release checksums, upgrade and rollback scripts, database/schema migrations, and an uninstall command that preserves site data by default.
 
 Exit checks: restore drills pass; path traversal and cross-site access tests pass; upgrades and rollbacks preserve sites; failures leave an actionable status; security review has no critical or high findings.

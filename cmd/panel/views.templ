@@ -235,6 +235,7 @@ templ sites(v view) {
 				{ v.T("site_workspace") }
 			}
 		</h2></div>
+		@actionForm(v.CSRF, "/reconcile?next="+url.QueryEscape(v.CurrentPath), "secondary", "refresh", v.T("refresh_status"), v.T("in_progress"))
 		if v.Page == "dashboard" {
 			<a class="button" href="/sites/new">@icon("plus")<span class="button-label">{ v.T("add_site") }</span></a>
 		} else {
@@ -257,11 +258,11 @@ templ siteCard(v view, site core.Site) {
 	{{ stats := v.Stats[site.ID] }}
 	{{ storage, hasStorage := v.Storage[site.ID] }}
 	<article class="card site-card">
-		<div class="site-head"><div class="site-icon">W</div><div class="site-meta"><h3>{ site.Title }</h3><a href={ templ.URL(sitePublicURL(site.Domain)) } target="_blank" rel="noopener">{ site.Domain }</a><small>{ site.ID } · { fmt.Sprintf("%d MB · %g CPU", site.MemoryMB, site.CPUs) }</small></div><div class="site-status"><span class={ "badge " + string(site.Status) }>{ v.T("status_" + string(site.Status)) }</span>
-			if v.Page == "site" && site.Status == core.StatusRunning {
+		<div class="site-head"><div class="site-icon">W</div><div class="site-meta"><h3>{ site.Title }</h3><a href={ templ.URL(sitePublicURL(site.Domain)) } target="_blank" rel="noopener">{ site.Domain }</a><small>{ site.ID } · { fmt.Sprintf("%d MB · %g CPU", site.MemoryMB, site.CPUs) }</small></div><div class="site-status"><span class={ "badge " + visibleStatus(site) }>{ v.T("status_" + visibleStatus(site)) }</span>
+			if v.Page == "site" && site.Status == core.StatusRunning && !operationPending(site) && site.HealthError == "" {
 				@actionForm(v.CSRF, "/sites/"+site.ID+"/stop", "secondary status-action", "stop", v.T("stop"), v.T("in_progress"))
 			}
-			if v.Page == "site" && site.Status == core.StatusStopped {
+			if v.Page == "site" && (site.Status == core.StatusStopped || site.Status == core.StatusUnhealthy) && !operationPending(site) && site.HealthError == "" {
 				@actionForm(v.CSRF, "/sites/"+site.ID+"/start", "status-action", "play", v.T("start"), v.T("in_progress"))
 			}
 		</div></div>
@@ -279,6 +280,15 @@ templ siteCard(v view, site core.Site) {
 					}
 				</details>
 			}
+			if !site.HealthCheckedAt.IsZero() {
+ <p class="hint">{ v.T("status_checked") }: { formatTime(site.HealthCheckedAt) }</p>
+ }
+			if site.HealthError != "" {
+ <p class="error">{ v.T("status_unavailable") }</p>
+ }
+			if operationPending(site) {
+ <p class="hint">{ v.T("operation_pending") }</p>
+ }
 			if site.Error != "" {
 				<p class="error">{ site.Error }</p>
 			}
@@ -296,17 +306,17 @@ templ siteWorkspace(v view, site core.Site) {
 		<a class="button secondary" href={ templ.URL("/sites/" + site.ID) }>@icon("dashboard")<span class="button-label">{ v.T("overview") }</span></a><a class="button secondary" href={ templ.URL("/sites/" + site.ID + "/backups") }>@icon("backup")<span class="button-label">{ v.T("backups") }</span></a><a class="button secondary" href={ templ.URL("/sites/" + site.ID + "/updates") }>@icon("refresh")<span class="button-label">{ v.T("updates") }</span></a><a class="button secondary" href={ templ.URL("/sites/" + site.ID + "/database") }>@icon("database")<span class="button-label">{ v.T("database") }</span></a><a class="button secondary" href={ templ.URL("/sites/" + site.ID + "/files") }>@icon("files")<span class="button-label">{ v.T("files") }</span></a>
 	</div>
 	<div class="site-actions">
-		if v.Page == "backups" && site.Status == core.StatusRunning {
+		if v.Page == "backups" && site.Status == core.StatusRunning && !operationPending(site) && site.HealthError == "" {
 			@actionForm(v.CSRF, "/sites/"+site.ID+"/backup", "", "backup", v.T("backup_now"), v.T("in_progress"))
 		}
-		if v.Page == "updates" && site.Status == core.StatusRunning {
+		if v.Page == "updates" && site.Status == core.StatusRunning && !operationPending(site) && site.HealthError == "" {
 			@actionForm(v.CSRF, "/sites/"+site.ID+"/update", "secondary", "refresh", v.T("update_wordpress"), v.T("in_progress"))
 		}
-		if v.Page == "database" && site.Status == core.StatusRunning {
+		if v.Page == "database" && site.Status == core.StatusRunning && !operationPending(site) && site.HealthError == "" {
 			@actionForm(v.CSRF, "/sites/"+site.ID+"/database-start", "secondary", "database", v.T("open_database_manager"), v.T("in_progress"))
 			<small>{ v.T("database_access_hint") }</small>
 		}
-		if v.Page == "site" && site.Status == core.StatusFailed {
+		if v.Page == "site" && site.Status == core.StatusFailed && !operationPending(site) {
 			@actionForm(v.CSRF, "/sites/"+site.ID+"/retry", "", "refresh", v.T("retry"), v.T("in_progress"))
 		}
 	</div>
@@ -398,7 +408,7 @@ templ siteMail(v view, site core.Site) {
 			<span class="badge running">{ v.T("enabled") }</span>
 		}
 	</summary><p class="hint">{ v.T("smtp_site_hint") }</p>
-		if site.Status == core.StatusRunning {
+		if site.Status == core.StatusRunning && !operationPending(site) && site.HealthError == "" {
 			<form action={ "/sites/" + site.ID + mailAction(site.MailEnabled) } method="post"><input type="hidden" name="csrf" value={ v.CSRF }/><button class="secondary">@icon("mail")<span class="button-label">
 				if site.MailEnabled {
 					{ v.T("disable_smtp") }
@@ -465,7 +475,7 @@ templ future(title, help string) { <div class="future">{ title }<span>{ help }</
 
 templ filesPage(v filesView) {
 	<!doctype html><html lang={ v.Language } dir={ v.Direction }>
-	<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>panel4wp · { v.T("file_manager") }</title><link rel="stylesheet" href="/assets/app.css?v=8"/><script src="/assets/htmx.min.js?v=8" defer></script><script src="/assets/app.js?v=8" defer></script></head>
+	<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>panel4wp · { v.T("file_manager") }</title><link rel="stylesheet" href="/assets/app.css?v=9"/><script src="/assets/htmx.min.js?v=8" defer></script><script src="/assets/app.js?v=8" defer></script></head>
 	<body><div class="shell">@sidebar(v.Language, v.PagePath, v.Languages, v.T, v.CSRF, "files")
 	<div class="workspace"><header class="file-topbar"><a class="icon-link" href={ templ.URL("/sites/" + v.Site.ID) }>@icon("arrow-left")<span>{ v.T("back_to_site") }</span></a><div class="eyebrow file-eyebrow">{ v.T("site_workspace") }</div><h1>{ v.T("file_manager") }</h1><p class="muted">{ v.Site.Domain } · wp-content</p></header>@alerts(v.Error, v.Message)
 		<section class="file-manager">
