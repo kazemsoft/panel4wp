@@ -1008,6 +1008,13 @@ func (w *worker) ServeHTTP(resp http.ResponseWriter, req *http.Request) {
 				return
 			}
 			result, err = w.changeResources(ctx, body)
+		} else if req.URL.Path == "/storage/capability" {
+			var body core.RuntimeRequest
+			if json.NewDecoder(req.Body).Decode(&body) != nil || !core.ValidID(body.SiteID) {
+				http.Error(resp, "invalid site ID", http.StatusBadRequest)
+				return
+			}
+			result, err = w.storageCapability(ctx, body.SiteID)
 		} else if req.URL.Path == "/capacity" {
 			var body core.RuntimeRequest
 			if json.NewDecoder(req.Body).Decode(&body) != nil {

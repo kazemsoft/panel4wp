@@ -1,0 +1,71 @@
+#!/bin/sh
+set -eu
+modprobe virtio_blk
+modprobe xfs
+mount -t xfs -o prjquota /dev/vda /quota
+mount -t xfs -o prjquota /dev/vdb /other
+project=3456789
+case "$(cat /proc/cmdline)" in
+ *phase=2*)
+  mount --bind /quota/wordpress /quota-wordpress
+  mount --bind /quota/database /quota-database
+  storage-probe | jq -e '.reason == "supported" and .project_accounting and .project_enforcement'
+  test "$(cat /quota/wordpress/seed)" = "preserved seed"
+  xfs_quota -x -c "quota -p -b -N $project" /quota | tee /tmp/quota-state | awk '$1 == "/dev/vda" && $4 == 8192 && $NF == "/quota" {found=1} END {exit !found}' || { cat /tmp/quota-state; exit 1; }
+  if dd if=/dev/zero of=/quota/database/reboot-fill bs=1M count=9 2>/tmp/write-error; then echo 'limit lost after reboot'; exit 1; fi
+  grep -Eq 'No space left|Disk quota exceeded' /tmp/write-error
+  rm /quota/database/reboot-fill
+  umount /quota-wordpress /quota-database /quota
+  mount -t xfs -o noquota /dev/vda /quota
+  mount --bind /quota/wordpress /quota-wordpress
+  mount --bind /quota/database /quota-database
+  storage-probe | jq -e '.wordpress_filesystem == "xfs" and .reason != "supported" and (.project_enforcement | not)'
+  echo REBOOT_LIMIT_AND_DISABLED_ENFORCEMENT_CHECK_PASS
+  exit 0
+ ;;
+esac
+mkdir /quota/wordpress /quota/database /other/database
+printf 'preserved seed' > /quota/wordpress/seed
+seed_before=$(sha256sum /quota/wordpress/seed | cut -d ' ' -f 1)
+mount --bind /quota/wordpress /quota-wordpress
+mount --bind /quota/database /quota-database
+storage-probe | jq -e '.reason == "supported" and .same_filesystem and .project_accounting and .project_enforcement'
+umount /quota-database
+mount --bind /other/database /quota-database
+storage-probe | jq -e '.reason == "different-filesystems" and (.same_filesystem | not)'
+umount /quota-database
+mount --bind /quota/database /quota-database
+xfs_quota -x -c "project -s -p /quota/wordpress -p /quota/database $project" /quota
+xfs_quota -x -c "limit -p bhard=8m $project" /quota
+test "$seed_before" = "$(sha256sum /quota/wordpress/seed | cut -d ' ' -f 1)"
+dd if=/dev/zero of=/quota/wordpress/file bs=1M count=5 2>/dev/null
+if dd if=/dev/zero of=/quota/database/file bs=1M count=5 2>/tmp/write-error; then echo 'aggregate quota not enforced'; exit 1; fi
+grep -Eq 'No space left|Disk quota exceeded' /tmp/write-error
+echo AGGREGATE_LIMIT_AND_EXISTING_DATA_PASS
+xfs_quota -x -c "limit -p bhard=16m $project" /quota
+dd if=/dev/zero of=/quota/database/file bs=1M count=5 2>/dev/null
+rm /quota/wordpress/file /quota/database/file
+xfs_quota -x -c "limit -p bhard=8m $project" /quota
+mkdir /quota/wordpress/inherited
+if dd if=/dev/zero of=/quota/wordpress/inherited/file bs=1M count=9 2>/tmp/write-error; then echo 'inheritance quota not enforced'; exit 1; fi
+grep -Eq 'No space left|Disk quota exceeded' /tmp/write-error
+rm -r /quota/wordpress/inherited
+echo LIMIT_CHANGES_AND_INHERITANCE_PASS
+touch /quota/wordpress/owner-file
+chown 33:33 /quota/wordpress/owner-file
+owner-check blocked /quota/wordpress/owner-file
+owner-check bypass /quota/wordpress/owner-file
+test "$(stat -c %s /quota/wordpress/owner-file)" -gt 8388608
+rm /quota/wordpress/owner-file
+echo SECURITY_GATES_REQUIRED_BEFORE_ACTIVATION
+# A failed extraction must be surfaced, with a preserved recovery copy.
+mkdir /tmp/source
+dd if=/dev/zero of=/tmp/source/oversize bs=1M count=12 2>/dev/null
+tar -czf /tmp/oversize.tar.gz -C /tmp/source .
+cp /quota/wordpress/seed /tmp/safety-seed
+if tar -xzf /tmp/oversize.tar.gz -C /quota/wordpress 2>/tmp/restore-error; then echo 'oversize restore unexpectedly succeeded'; exit 1; fi
+grep -Eq 'No space left|Disk quota exceeded' /tmp/restore-error
+cmp /tmp/safety-seed /quota/wordpress/seed
+rm -f /quota/wordpress/oversize
+echo OVERSIZE_EXTRACTION_FAILURE_PASS
+sync

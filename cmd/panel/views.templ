@@ -131,7 +131,7 @@ templ documentHead(v view) {
 		<meta charset="utf-8"/>
 		<meta name="viewport" content="width=device-width, initial-scale=1"/>
 		<title>panel4wp · { v.T("workspace") }</title>
-		<link rel="stylesheet" href="/assets/app.css?v=10"/>
+		<link rel="stylesheet" href="/assets/app.css?v=11"/>
 		<script src="/assets/htmx.min.js?v=7" defer></script>
 		<script src="/assets/app.js?v=10" defer></script>
 	</head>
@@ -596,6 +596,28 @@ templ siteResourcesForm(v view,site core.Site) {
  <button class="form-submit" disabled?={ v.Capacity==nil }>@icon("check")<span class="button-label">{ v.T("resources_save") }</span></button>
  </form>
  } else { <p class="hint">{ v.T("resources_repair_first") }</p> }
+ </section>
+ @diskQuotaCapability(v)
+}
+
+templ diskQuotaCapability(v view) {
+ <section class="resources-form disk-capability">
+  <h3>{ v.T("disk_quota_title") } <span class="badge">{ v.T("disk_quota_not_enabled") }</span></h3>
+  <p class="hint">{ v.T("disk_quota_scope") }</p>
+  if v.DiskCapability==nil {
+   <p class="form-error" role="status">{ v.T("disk_quota_check_failed") }</p>
+  } else {
+   if v.DiskCapability.WordPressFilesystem!="" {
+    <p class="hint">{ v.T("disk_quota_filesystem") }: <b dir="ltr">{ v.DiskCapability.WordPressFilesystem+" / "+v.DiskCapability.DatabaseFilesystem }</b></p>
+   }
+   if v.DiskCapability.SupportsProjectQuotas() {
+    <p class="hint">{ v.T("disk_quota_backend_supported") }</p>
+   } else {
+    <p class="hint">{ v.T(diskCapabilityReasonKey(v.DiskCapability.Reason)) }</p>
+   }
+  }
+  <p class="hint">{ v.T("disk_quota_development") }</p>
+  <a class="button secondary" href="https://github.com/kazemsoft/panel4wp/blob/main/docs/RESOURCES.md#hard-disk-quotas" target="_blank" rel="noopener noreferrer">@icon("link")<span>{ v.T("disk_quota_docs") }</span></a>
  </section>
 }
 

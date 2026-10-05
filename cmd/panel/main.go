@@ -80,6 +80,7 @@ type view struct {
 	Plans           []core.ResourcePlan
 	Capacity        *core.HostCapacity
 	CapacityError   string
+	DiskCapability  *core.StorageCapability
 	CurrentPath     string
 }
 
@@ -282,6 +283,14 @@ func (a *app) render(w http.ResponseWriter, r *http.Request, v view) {
 				v.CapacityError = i18n.T(v.Language, "capacity_unavailable")
 			} else if capacity.MemoryBytes > 0 && capacity.CPUs > 0 {
 				v.Capacity = &capacity
+			}
+			cancel()
+		}
+		if v.Page == "resources" {
+			checkCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+			var capability core.StorageCapability
+			if err := a.callWorkerContext(checkCtx, "/storage/capability", core.RuntimeRequest{SiteID: v.SelectedID}, &capability, ""); err == nil {
+				v.DiskCapability = &capability
 			}
 			cancel()
 		}

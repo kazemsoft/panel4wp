@@ -23,11 +23,45 @@ Other running Docker containers, including database tools, are also counted. A c
 
 At least 2 GiB must be free on the Docker storage filesystem and on the panel data filesystem. The Docker check uses the container filesystem on the default local Docker storage; external volume drivers or independently mounted volume storage are outside this check. Capacity readings fail closed when Docker, statistics, or storage cannot be checked.
 
-## Hard disk quotas: remaining work
+## Hard disk quotas
 
 Disk admission and disk usage reporting are **not hard per-site quotas**. WordPress and database data live in Docker volumes. A container's writable-layer `storage-opt size` does not limit those volumes. Filesystem-backed project quotas or a supported volume driver must enforce the limit; see [Docker volume documentation](https://docs.docker.com/engine/storage/volumes/) and [Docker storage options](https://docs.docker.com/reference/cli/dockerd/).
 
-Hard quotas remain in roadmap step 2 until the Linux storage backend, migration of existing volumes, backup/restore behavior at quota limits, and actual out-of-space enforcement can be tested on a suitable VM. The panel does not display an unenforced disk limit as a working quota.
+The Resources page now reports the backing filesystem of each site's two volumes and checks project-quota accounting and enforcement through Linux `quotactl_fd(Q_XGETQSTATV)`. Both volumes must be Compose-owned local volumes without driver options, on the same XFS filesystem. The query requires Linux 5.14 or later and suitable worker-helper permissions. A filesystem type or mount option alone is not treated as proof of enforcement. A failed query remains unverified.
+
+This is a **read-only capability check**. Even when XFS reports enforcement enabled, no project quota has been assigned by the panel. The UI always says **Not enabled**. The current Docker Desktop installation uses ext4, and its VM kernel also lacks XFS quota support; activation cannot be tested directly on that storage.
+
+### Isolated Linux proof
+
+Run the reproducible kernel drill from the repository root:
+
+```sh
+tests/quota-vm/run.sh
+```
+
+The script builds an Alpine Linux VM with XFS quota support and boots it through QEMU. It works with AMD64 and ARM64 Docker hosts and does not require the host kernel to support XFS quotas. The outer container has no host mounts, Docker socket, device access, privileged flag, or network during execution. Its two sparse test disks are discarded with the container. Building requires internet access for Alpine packages; execution reserves 1 GiB RAM and 2 CPUs. The final success marker is `QUOTA_DRILL_PASS`; a VM failure or timeout makes the script fail. CI also runs this drill.
+
+Verified on local ARM64 Docker on 2026-10-05:
+
+- Native kernel quota enforcement limits the **combined** WordPress and database directory usage, rather than each directory independently.
+- Project tagging preserves an existing file, and new subdirectories inherit the quota.
+- Increasing the limit permits additional writes; lowering it after removing data restores the smaller limit.
+- Two different XFS filesystems are rejected as a shared-quota backend by the production probe.
+- The limit and seed file survive a real guest shutdown and second boot from the same virtual disk. Mounting without quota enforcement is reported as unsupported/unverified.
+- An oversized archive extraction fails at the quota while a separate safety file remains intact. This is a filesystem test, **not a WordPress/MariaDB restore acceptance test**.
+- A process running as UID33 can change the project ID of its own file and write 16 MiB outside an 8 MiB project limit. A lab seccomp filter blocks that ioctl. This deliberately reproduces why filesystem quotas alone are insufficient.
+
+### Activation gates still open
+
+1. Protect every writer (WordPress, MariaDB, CLI, restore and file helpers) against changing project IDs or inheritance. Preserve Docker's default seccomp protections while denying quota attribute mutation, including applicable newer attribute syscalls. The small filter in the drill permits unrelated syscalls and **must not be used as a production profile**.
+2. Gate automatic Docker/host restarts on verified quota enforcement. Existing `unless-stopped` policies can restart containers before the worker checks storage; quota-enabled sites must not use that path without a verified gate.
+3. Allocate project IDs durably, verify filesystem-global ownership/collisions, tag existing data with every writer stopped, and recover partial tagging after interruption. Shared hardlinks, symlinks and unrelated projects need explicit acceptance tests.
+4. Test real WordPress/MariaDB activation, limit reductions below usage, backup/restore at capacity, interrupted operations, and failure recovery on a dedicated Linux Docker host. Preserve safety backups and leave failed restores stopped.
+5. Document and test moving existing ext4 volumes to quota-capable storage, with rollback and data-preservation checks. No host filesystem migration or volume retagging is performed by this release.
+
+Primary references: [XFS quota manual](https://man7.org/linux/man-pages/man8/xfs_quota.8.html), [Linux quota syscall](https://man7.org/linux/man-pages/man2/quotactl.2.html), [Linux owner attribute checks](https://github.com/torvalds/linux/blob/v6.6/fs/ioctl.c), [Docker restart policies](https://docs.docker.com/engine/containers/start-containers-automatically/).
+
+Hard quotas remain open in roadmap step 2 until these gates pass.
 
 ## Verification
 

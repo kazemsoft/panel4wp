@@ -9,6 +9,12 @@ permissions:
   contents: read
 
 jobs:
+  storage-kernel-drill:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: tests/quota-vm/run.sh
+        timeout-minutes: 10
   test:
     runs-on: ubuntu-latest
     steps:

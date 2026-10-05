@@ -5,7 +5,13 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/worker ./cmd/worker
 
+FROM alpine:3.22 AS storage-probe
+RUN apk add --no-cache build-base linux-headers
+COPY deploy/storage-probe.c /src/storage-probe.c
+RUN cc -std=c11 -Wall -Wextra -Werror -O2 -static /src/storage-probe.c -o /storage-probe
+
 FROM docker:cli
 RUN apk add --no-cache docker-cli-compose ca-certificates
 COPY --from=build /out/worker /usr/local/bin/worker
+COPY --from=storage-probe /storage-probe /usr/local/bin/storage-probe
 ENTRYPOINT ["/usr/local/bin/worker"]

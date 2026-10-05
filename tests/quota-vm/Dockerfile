@@ -1,0 +1,14 @@
+FROM alpine:3.22 AS helpers
+RUN apk add --no-cache build-base linux-headers
+COPY deploy/storage-probe.c /src/storage-probe.c
+COPY tests/quota-vm/owner-check.c /src/owner-check.c
+RUN cc -std=c11 -Wall -Wextra -Werror -O2 -static /src/storage-probe.c -o /storage-probe && cc -std=c11 -Wall -Wextra -Werror -O2 -static /src/owner-check.c -o /owner-check
+
+FROM alpine:3.22
+RUN case "$(uname -m)" in aarch64) task_qemu=aarch64 ;; x86_64) task_qemu=x86_64 ;; *) exit 1 ;; esac; apk add --no-cache "qemu-system-$task_qemu" linux-virt xfsprogs xfsprogs-extra cpio gzip jq
+COPY --from=helpers /storage-probe /usr/local/bin/storage-probe
+COPY --from=helpers /owner-check /usr/local/bin/owner-check
+COPY tests/quota-vm/init tests/quota-vm/drill tests/quota-vm/vm-run /lab/
+RUN cp /lab/init /init && chmod +x /init /lab/* && mkdir -p /proc /sys /dev /quota /other /quota-wordpress /quota-database && find . -xdev -not -path './proc/*' -not -path './sys/*' -not -path './dev/*' -not -path './tmp/*' | cpio -o -H newc | gzip > /tmp/root.cpio.gz
+RUN truncate -s 512M /tmp/quota.img && mkfs.xfs -f /tmp/quota.img >/dev/null && truncate -s 512M /tmp/other.img && mkfs.xfs -f /tmp/other.img >/dev/null
+ENTRYPOINT ["/lab/vm-run"]

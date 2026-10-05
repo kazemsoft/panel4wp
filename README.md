@@ -114,6 +114,8 @@ The Sites page can request a live resource snapshot for every running site. It d
 
 The same refresh measures the real disk space occupied by each site's WordPress volume, MariaDB volume, and local backups. Hard filesystem quotas are not enforced yet.
 
+Resources also checks the site's backing filesystems and actual kernel support for project-quota enforcement. This read-only result is shown separately from an assigned quota; activation remains in development. A reproducible [isolated Linux VM drill](tests/quota-vm/README.md) tests the proposed storage backend without changing host volumes. See [hard disk quota progress and acceptance gates](docs/RESOURCES.md#hard-disk-quotas).
+
 The **Back up and update WordPress** action first creates and records a verified safety backup. It then updates WordPress core, runs database migrations, and updates all plugins and themes through the site's isolated WP-CLI service. The safety backup remains available for an in-place restore if an extension update causes a regression.
 
 Each running site has a browser file manager restricted to its `wp-content` directory. It can browse directories, upload and download files up to 10 MB, create directories, move entries, delete files, and remove empty directories. Rows can be selected from the table or opened through a context menu. It refuses unsafe relative paths and symbolic links, runs as the WordPress user, and constrains PHP filesystem access. Writes use a temporary file and atomic replacement. Directory listings are limited to 5,000 entries.

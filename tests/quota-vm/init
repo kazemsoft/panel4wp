@@ -1,0 +1,8 @@
+#!/bin/sh
+export PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+mount -t proc proc /proc || poweroff -f
+mount -t sysfs sysfs /sys || poweroff -f
+mount -t devtmpfs devtmpfs /dev || poweroff -f
+if sh /lab/drill; then echo QUOTA_DRILL_PHASE_PASS; else echo QUOTA_DRILL_FAIL; fi
+sync
+poweroff -f
