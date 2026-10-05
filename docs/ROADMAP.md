@@ -7,7 +7,7 @@ The project is intentionally split into a safe single administrator product firs
 The administrator approved this order on 2026-10-05. Complete and test each step before moving to the next:
 
 1. **Service reliability and restart recovery:** Docker runtime reconciliation, durable receipts for long site operations, interrupted-operation recovery guidance, and restart-safe database tool sessions. Implemented with focused restart and security regression tests; live Docker checks are recorded in `docs/RECOVERY.md`. Fresh Linux VM/host reboot acceptance remains part of step 5.
-2. **Resources and capacity:** edit CPU/RAM after creation, custom resource plans, pre-provisioning capacity checks, and hard disk quotas.
+2. **Resources and capacity:** CPU/RAM edits, custom per-site allocations, reusable named plans, capacity admission before create/start/change, and a separate guided Resources page are implemented. Other running Docker workloads are included in the budget. Remaining: hard disk quotas with a tested Linux storage backend and migration path. See `docs/RESOURCES.md`; step 2 remains open for those checks.
 3. **File and site administration:** file creation/editing/copy/rename, bulk and archive operations, SFTP keys, domain changes, PHP settings, maintenance mode, and site logs.
 4. **Remote backups and alerts:** off-host backup copies, encryption, restore into a new site, and notifications for backup failures, low capacity, and service/certificate problems.
 5. **Release packaging and fresh VM tests:** versioned AMD64/ARM64 images, upgrade/rollback and data migration workflows, data-preserving uninstall, and installation/recovery tests on fresh Debian/Ubuntu VMs.
@@ -30,7 +30,7 @@ Exit checks: a clean install creates a working local and public site; start/stop
 1. **Backups and restore:** on-demand and scheduled checksum-verified backups, retention, and in-place restore are complete. Remaining: off-host copies, encryption, and restore to a new site ID.
 2. **File access:** browser file manager constrained to `wp-content` is complete for files up to 10 MB. Remaining: per-site SFTP using public keys, archive extraction, bulk operations, and detailed file-operation audit events.
 3. **Database tools:** the on-demand phpMyAdmin manager behind the authenticated panel is complete, with a 15-minute session and startup cleanup.
-4. **Resource controls:** creation-time CPU, memory, and process limits are complete. Remaining: storage quotas, custom plans, edits after creation, and host capacity validation.
+4. **Resource controls:** CPU, memory and process limits, custom per-site allocations, edits after creation and host capacity admission are implemented. Remaining: enforced storage quotas.
 5. **Site operations:** domain change, PHP settings, maintenance mode and logs remain. WordPress/plugin/theme updates with safety backups and runtime reconciliation are implemented.
 6. **Host operations:** disk/RAM overview, image updates, certificate and backup alerts, password rotation, and recovery workflow.
 7. **Packaging:** versioned images, release checksums, upgrade and rollback scripts, database/schema migrations, and an uninstall command that preserves site data by default.

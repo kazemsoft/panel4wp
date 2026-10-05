@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -240,7 +241,7 @@ func ValidateSite(s Site) error {
 	if s.MemoryMB != 0 && (s.MemoryMB < 256 || s.MemoryMB > 8192) {
 		return errors.New("memory must be between 256 and 8192 MB per container")
 	}
-	if s.CPUs != 0 && (s.CPUs < 0.25 || s.CPUs > 8) {
+	if math.IsNaN(s.CPUs) || math.IsInf(s.CPUs, 0) || s.CPUs != 0 && (s.CPUs < 0.25 || s.CPUs > 8) {
 		return errors.New("CPU limit must be between 0.25 and 8 per container")
 	}
 	return nil
@@ -274,4 +275,5 @@ type SiteRuntime struct {
 	Status    Status     `json:"status"`
 	Detail    string     `json:"detail,omitempty"`
 	Operation *Operation `json:"operation,omitempty"`
+	Resources *Resources `json:"resources,omitempty"`
 }

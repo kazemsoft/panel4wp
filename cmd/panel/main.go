@@ -77,6 +77,9 @@ type view struct {
 	Language        string
 	Direction       string
 	Languages       []languageOption
+	Plans           []core.ResourcePlan
+	Capacity        *core.HostCapacity
+	CapacityError   string
 	CurrentPath     string
 }
 
@@ -126,7 +129,7 @@ func formatBytes(n int64) string {
 }
 func isSitePage(pageName string) bool {
 	switch pageName {
-	case "dashboard", "new", "site", "backups", "updates", "database", "files":
+	case "dashboard", "new", "site", "backups", "updates", "database", "files", "resources":
 		return true
 	default:
 		return false
@@ -237,12 +240,13 @@ func (a *app) render(w http.ResponseWriter, r *http.Request, v view) {
 	headings := map[string][2]string{
 		"dashboard": {"dashboard_title", "dashboard_guide"},
 		"new":       {"new_title", "new_guide"},
-		"settings":  {"settings_title", "settings_guide"},
+		"settings":  {"settings", "settings_page_guide"},
 		"activity":  {"activity_title", "activity_guide"},
 		"site":      {"site_title_page", "site_guide"},
 		"backups":   {"backups_title", "backups_guide"},
 		"updates":   {"updates_title", "updates_guide"},
 		"database":  {"database_title", "database_guide"},
+		"resources": {"resources_title", "resources_guide"},
 		"roadmap":   {"roadmap_title", "roadmap_guide"},
 	}
 	v.PageTitle, v.Guide = i18n.T(v.Language, headings[v.Page][0]), i18n.T(v.Language, headings[v.Page][1])
@@ -250,6 +254,11 @@ func (a *app) render(w http.ResponseWriter, r *http.Request, v view) {
 		sites, err := a.store.List()
 		if err != nil {
 			http.Error(w, "unable to read sites", http.StatusInternalServerError)
+			return
+		}
+		v.Plans, err = a.store.ListResourcePlans()
+		if err != nil {
+			http.Error(w, "unable to read resource plans", http.StatusInternalServerError)
 			return
 		}
 		v.Sites = sites
@@ -265,6 +274,16 @@ func (a *app) render(w http.ResponseWriter, r *http.Request, v view) {
 				return
 			}
 			sites = v.Sites
+		}
+		if v.Page == "new" || v.Page == "resources" {
+			var capacity core.HostCapacity
+			checkCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+			if err := a.callWorkerContext(checkCtx, "/capacity", core.RuntimeRequest{SiteID: v.SelectedID}, &capacity, ""); err != nil {
+				v.CapacityError = i18n.T(v.Language, "capacity_unavailable")
+			} else if capacity.MemoryBytes > 0 && capacity.CPUs > 0 {
+				v.Capacity = &capacity
+			}
+			cancel()
 		}
 		if a.settings != nil {
 			if mail, loadErr := a.settings.Load(); loadErr == nil {
@@ -388,6 +407,9 @@ func (a *app) callWorker(path string, body, result any) error {
 }
 
 func (a *app) callWorkerContext(ctx context.Context, path string, body, result any, operationID string) error {
+	if a.client == nil || a.workerURL == "" {
+		return errors.New("worker is not configured")
+	}
 	b, err := json.Marshal(body)
 	if err != nil {
 		return err
@@ -536,7 +558,7 @@ func (a *app) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if len(parts) == 1 {
 				pageName, selectedID = "site", parts[0]
 			}
-			if len(parts) == 2 && (parts[1] == "backups" || parts[1] == "updates" || parts[1] == "database") {
+			if len(parts) == 2 && (parts[1] == "backups" || parts[1] == "updates" || parts[1] == "database" || parts[1] == "resources") {
 				pageName, selectedID = parts[1], parts[0]
 			}
 		}
@@ -577,6 +599,10 @@ func (a *app) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		a.createSite(w, r)
 		return
 	}
+	if r.URL.Path == "/settings/resource-plans" || r.URL.Path == "/settings/resource-plans/delete" {
+		a.resourcePlansAction(w, r)
+		return
+	}
 	if r.URL.Path == "/settings/mail" {
 		a.saveMailSettings(w, r)
 		return
@@ -589,7 +615,10 @@ func (a *app) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) createSite(w http.ResponseWriter, r *http.Request) {
-	a.opsMu.Lock()
+	if !a.opsMu.TryLock() {
+		http.Error(w, "An operation is in progress. Try again when it finishes.", http.StatusConflict)
+		return
+	}
 	defer a.opsMu.Unlock()
 	id, err := core.NewID()
 	if err != nil {
@@ -605,17 +634,12 @@ func (a *app) createSite(w http.ResponseWriter, r *http.Request) {
 		a.render(w, r, view{LoggedIn: true, Error: err.Error()})
 		return
 	}
-	memory, cpus := 768, 1.0
-	switch r.FormValue("plan") {
-	case "small":
-		memory, cpus = 384, 0.5
-	case "", "standard":
-	case "large":
-		memory, cpus = 1536, 2
-	default:
-		a.render(w, r, view{LoggedIn: true, Error: "Invalid resource plan"})
+	limits, err := a.formResources(r)
+	if err != nil {
+		a.render(w, r, view{LoggedIn: true, Page: "new", Error: err.Error()})
 		return
 	}
+	memory, cpus := limits.MemoryMB, limits.CPUs
 	site := core.Site{ID: id, Domain: domain, Title: strings.TrimSpace(r.FormValue("title")), AdminEmail: strings.TrimSpace(r.FormValue("email")), MemoryMB: memory, CPUs: cpus, Status: core.StatusCreating, CreatedAt: time.Now().UTC()}
 	if err := core.ValidateSite(site); err != nil {
 		a.render(w, r, view{LoggedIn: true, Error: err.Error()})
@@ -631,6 +655,15 @@ func (a *app) createSite(w http.ResponseWriter, r *http.Request) {
 			a.render(w, r, view{LoggedIn: true, Error: "Domain already belongs to a site"})
 			return
 		}
+	}
+	var capacity core.HostCapacity
+	if err := a.callWorker("/capacity", core.RuntimeRequest{}, &capacity); err != nil {
+		a.render(w, r, view{LoggedIn: true, Page: "new", Error: i18n.T(i18n.Resolve(r), "capacity_unavailable")})
+		return
+	}
+	if err := capacity.Check(limits); err != nil {
+		a.render(w, r, view{LoggedIn: true, Page: "new", Error: err.Error()})
+		return
 	}
 	dbPassword, err := core.RandomPassword()
 	if err != nil {
@@ -664,7 +697,10 @@ func (a *app) createSite(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) siteAction(w http.ResponseWriter, r *http.Request) {
-	a.opsMu.Lock()
+	if !a.opsMu.TryLock() {
+		http.Error(w, "An operation is in progress. Try again when it finishes.", http.StatusConflict)
+		return
+	}
 	defer a.opsMu.Unlock()
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/sites/"), "/")
 	if len(parts) != 2 || !core.ValidID(parts[0]) {
@@ -679,6 +715,10 @@ func (a *app) siteAction(w http.ResponseWriter, r *http.Request) {
 	}
 	if site.Operation != nil && site.Operation.State == "pending" {
 		http.Error(w, "An operation is unresolved. Refresh service status before trying again.", http.StatusConflict)
+		return
+	}
+	if action == "resources" {
+		a.saveResources(w, r, site)
 		return
 	}
 	if action == "upload" || action == "download" || action == "mkdir" || action == "file-delete" || action == "file-move" {

@@ -187,3 +187,17 @@ document.addEventListener("DOMContentLoaded", () => {
 
   sync();
 });
+
+
+// Resource inputs remain usable without JavaScript; enhance preset selection.
+function updateResourceFields(select) {
+ const fields=select.closest('form')?.querySelector('[data-custom-resources]');
+ if(!fields)return;
+ const custom=select.value==='custom';
+ fields.hidden=!custom;
+ fields.querySelectorAll('input').forEach(input=>input.disabled=!custom);
+}
+document.querySelectorAll('[data-resource-plan]').forEach(updateResourceFields);
+document.addEventListener('change',event=>{
+ if(event.target.matches('[data-resource-plan]'))updateResourceFields(event.target);
+});

@@ -48,6 +48,15 @@ func (f *outputDocker) Output(_ context.Context, args ...string) ([]byte, error)
 
 func (f *fakeDocker) Output(_ context.Context, args ...string) ([]byte, error) {
 	f.calls = append(f.calls, append([]string(nil), args...))
+	if args[0] == "info" {
+		return []byte(`{"cpus":32,"memory_bytes":68719476736}`), nil
+	}
+	if args[0] == "run" && strings.Contains(strings.Join(args, " "), "wph-capacity-probe") {
+		return []byte("Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/test 10000000 1000 9000000 1% /"), nil
+	}
+	if args[0] == "ps" {
+		return nil, nil
+	}
 	return []byte("[]"), nil
 }
 

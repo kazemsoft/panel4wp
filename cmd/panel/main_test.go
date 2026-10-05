@@ -102,6 +102,10 @@ func TestDatabaseProxyDoesNotForwardPanelCookies(t *testing.T) {
 func TestLoginCreateAndRejectMissingCSRF(t *testing.T) {
 	workerCalls := 0
 	worker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/capacity" {
+			json.NewEncoder(w).Encode(core.HostCapacity{CPUs: 16, MemoryBytes: 16 << 30, DockerDiskFreeBytes: 16 << 30, DataDiskFreeBytes: 16 << 30})
+			return
+		}
 		if r.URL.Path != "/create" || r.Header.Get("X-Worker-Token") != strings.Repeat("t", 64) {
 			t.Errorf("unexpected worker request: %s, %s", r.URL.Path, r.Header.Get("X-Worker-Token"))
 		}

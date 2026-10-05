@@ -137,3 +137,17 @@
 
 .badge.unhealthy, .badge.unknown { background: #fff4df; color: #855600; }
 .badge.busy { background: #eceeff; color: #464edb; }
+
+.capacity-summary { margin-block: 1.25rem; }
+.capacity-summary .overview { margin-block: 1rem; }
+.capacity-summary .metric { padding: 1rem; }
+.capacity-summary .metric strong { font-size: 1.3rem; }
+.resources-form { padding-block: .5rem 1rem; }
+[data-custom-resources][hidden] { display: none; }
+
+.resources-plan-settings { margin-block-start: 1.5rem; }
+.resources-plan-settings .table-wrap { margin-block-start: 1.5rem; }
+
+.resources-form .form-grid,.resources-plan-settings .form-grid,#create-site .form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1.25rem; }
+.resources-form .form-grid label,.resources-plan-settings .form-grid label,#create-site .form-grid label { margin-block:.75rem; }
+@media(max-width:650px){ .resources-form .form-grid,.resources-plan-settings .form-grid,#create-site .form-grid { grid-template-columns:1fr; gap:0; } .capacity-summary .overview { grid-template-columns:1fr; } .capacity-summary .overview .metric:last-child { display:block; } }

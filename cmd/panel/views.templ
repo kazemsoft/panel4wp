@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+ "strconv"
 	"net/url"
 
 	"github.com/kazemsoft/panel4wp/internal/core"
@@ -130,9 +131,9 @@ templ documentHead(v view) {
 		<meta charset="utf-8"/>
 		<meta name="viewport" content="width=device-width, initial-scale=1"/>
 		<title>panel4wp · { v.T("workspace") }</title>
-		<link rel="stylesheet" href="/assets/app.css?v=7"/>
+		<link rel="stylesheet" href="/assets/app.css?v=10"/>
 		<script src="/assets/htmx.min.js?v=7" defer></script>
-		<script src="/assets/app.js?v=7" defer></script>
+		<script src="/assets/app.js?v=10" defer></script>
 	</head>
 }
 
@@ -181,7 +182,7 @@ templ appShell(v view) {
 							switch v.Page {
 								case "new":
 									@newSite(v)
-								case "dashboard", "site", "backups", "updates", "database":
+								case "dashboard", "site", "backups", "updates", "database", "resources":
 									@sites(v)
 								case "settings":
 									@settingsPage(v)
@@ -216,12 +217,13 @@ templ dashboardMetrics(v view) {
 templ newSite(v view) {
 	<section id="create-site" class="form-card">
 		<div class="eyebrow">{ v.T("new_workspace") }</div><h2>{ v.T("create_site") }</h2><p class="hint">{ v.T("create_site_hint") }</p>
+		@capacityOverview(v)
 		<form action="/sites" method="post" data-disable-on-submit data-progress-label={ v.T("in_progress") }><input type="hidden" name="csrf" value={ v.CSRF }/>
 			<label>{ v.T("domain") }<input name="domain" placeholder="example.com"/></label>
 			<label>{ v.T("site_title") }<input name="title" required maxlength="120"/></label>
 			<label>{ v.T("wordpress_admin_email") }<input type="email" name="email" required/></label>
-			<label>{ v.T("resource_plan") }<select name="plan"><option value="small">{ v.T("plan_small") } · 384 MB · 0.5 CPU</option><option value="standard" selected>{ v.T("plan_standard") } · 768 MB · 1 CPU</option><option value="large">{ v.T("plan_large") } · 1536 MB · 2 CPUs</option></select></label>
-			<p><button>@icon("plus")<span class="button-label">{ v.T("create_site") }</span></button></p>
+			@resourceFields(v, core.Resources{MemoryMB:768,CPUs:1})
+			<p><button disabled?={ v.Capacity == nil }>@icon("plus")<span class="button-label">{ v.T("create_site") }</span></button></p>
 		</form><small>{ v.T("local_domain_hint") }</small>
 	</section>
 }
@@ -303,6 +305,7 @@ templ siteCard(v view, site core.Site) {
 
 templ siteWorkspace(v view, site core.Site) {
 	<div class="site-actions">
+		<a class="button secondary" href={ templ.URL("/sites/" + site.ID + "/resources") }>@icon("settings")<span class="button-label">{ v.T("resources_title") }</span></a>
 		<a class="button secondary" href={ templ.URL("/sites/" + site.ID) }>@icon("dashboard")<span class="button-label">{ v.T("overview") }</span></a><a class="button secondary" href={ templ.URL("/sites/" + site.ID + "/backups") }>@icon("backup")<span class="button-label">{ v.T("backups") }</span></a><a class="button secondary" href={ templ.URL("/sites/" + site.ID + "/updates") }>@icon("refresh")<span class="button-label">{ v.T("updates") }</span></a><a class="button secondary" href={ templ.URL("/sites/" + site.ID + "/database") }>@icon("database")<span class="button-label">{ v.T("database") }</span></a><a class="button secondary" href={ templ.URL("/sites/" + site.ID + "/files") }>@icon("files")<span class="button-label">{ v.T("files") }</span></a>
 	</div>
 	<div class="site-actions">
@@ -321,6 +324,9 @@ templ siteWorkspace(v view, site core.Site) {
 		}
 	</div>
 	<div class="site-details">
+		if v.Page == "resources" {
+ @siteResourcesForm(v,site)
+ }
 		if v.Page == "backups" {
 			@backupSchedule(v, site)
 			if len(site.Backups) > 0 {
@@ -437,6 +443,7 @@ templ settingsPage(v view) {
 	<form action="/settings/mail" method="post"><input type="hidden" name="csrf" value={ v.CSRF }/><label class="checkbox-label"><input type="checkbox" name="enabled" checked?={ v.Mail.Enabled }/> { v.T("enable_global_smtp") }</label><div class="file-tools"><div>
 		<label>{ v.T("smtp_host") }<input name="smtp_host" value={ v.Mail.Host } placeholder="smtp.example.com" autocomplete="off"/></label><label>{ v.T("encryption") }<select name="smtp_encryption"><option value="starttls" selected?={ v.Mail.Encryption == "starttls" }>STARTTLS</option><option value="tls" selected?={ v.Mail.Encryption == "tls" }>TLS</option><option value="none" selected?={ v.Mail.Encryption == "none" }>{ v.T("none") }</option></select></label><label>{ v.T("username") }<input name="smtp_username" value={ v.Mail.Username } autocomplete="off"/></label><label>{ v.T("from_email") }<input type="email" name="smtp_from_email" value={ v.Mail.FromEmail } placeholder="hello@example.com"/></label>
 	</div><div><label>{ v.T("port") }<input type="number" name="smtp_port" value={ portValue(v.Mail.Port) } placeholder="587" min="1" max="65535"/></label><label>{ v.T("sender_name") }<input name="smtp_from_name" value={ v.Mail.FromName } placeholder={ v.T("your_company") }/></label><label>{ v.T("password") }<input type="password" name="smtp_password" autocomplete="new-password" placeholder={ passwordPlaceholder(v) }/></label><p class="hint">{ v.T("password_encrypted_hint") }</p></div></div><button class="form-submit">@icon("check")<span class="button-label">{ v.T("save_mail_settings") }</span></button></form></section>
+ @resourcePlanSettings(v)
 }
 
 templ activityPage(v view) {
@@ -550,4 +557,64 @@ templ fileManagerDialogs(v filesView) {
 	<dialog id="file-delete-modal" class="confirm-dialog file-dialog" aria-labelledby="file-delete-title"><div class="dialog-header"><div class="dialog-title">@icon("trash")<h3 id="file-delete-title">{ v.T("confirm_delete") }</h3></div><button class="secondary icon-button" type="button" data-modal-close aria-label={ v.T("cancel") }>@icon("close")</button></div>
 		<p class="dialog-warning" data-delete-question-template={ v.T("delete_file_question") } data-delete-question></p><form action={ "/sites/" + v.Site.ID + "/file-delete" } method="post" data-disable-on-submit data-progress-label={ v.T("in_progress") }><input type="hidden" name="csrf" value={ v.CSRF }/><input type="hidden" name="path" data-selected-path/><div class="dialog-actions"><button class="secondary" type="button" data-modal-close>{ v.T("cancel") }</button><button class="danger" type="submit">@icon("trash")<span class="button-label">{ v.T("confirm_delete") }</span></button></div></form>
 	</dialog>
+}
+
+
+templ capacityOverview(v view) {
+ <section class="capacity-summary">
+ <h3>{ v.T("capacity_title") }</h3><p class="hint">{ v.T("capacity_hint") }</p>
+ if v.Capacity != nil {
+ <div class="overview">
+ <div class="metric"><span>{ v.T("capacity_ram") }</span><strong>{ formatBytes(v.Capacity.AvailableMemoryBytes()) }</strong><small>{ v.T("capacity_total") }: { formatBytes(v.Capacity.MemoryBytes) }</small></div>
+ <div class="metric"><span>{ v.T("capacity_cpu") }</span><strong>{ fmt.Sprintf("%.2f",v.Capacity.AvailableCPUs()) }</strong><small>{ v.T("capacity_total") }: { fmt.Sprintf("%g",v.Capacity.CPUs) }</small></div>
+ <div class="metric"><span>{ v.T("capacity_disk") }</span><strong>{ formatBytes(min(v.Capacity.DockerDiskFreeBytes,v.Capacity.DataDiskFreeBytes)) }</strong><small>{ v.T("capacity_disk_hint") }</small></div>
+ </div>
+ } else {<p class="error">{ v.CapacityError }</p>}
+ </section>
+}
+
+templ resourceFields(v view,r core.Resources) {
+ <label>{ v.T("resource_plan") }<select name="plan" data-resource-plan><option value="small" selected?={ r.MemoryMB==384 && r.CPUs==.5 }>{ v.T("plan_small") } · 384 MiB · 0.5 CPU</option><option value="standard" selected?={ r.MemoryMB==768 && r.CPUs==1 }>{ v.T("plan_standard") } · 768 MiB · 1 CPU</option><option value="large" selected?={ r.MemoryMB==1536 && r.CPUs==2 }>{ v.T("plan_large") } · 1536 MiB · 2 CPUs</option>for _,plan := range v.Plans {
+ <option value={ "saved-"+plan.ID }>{ plan.Name } · { strconv.Itoa(plan.Resources.MemoryMB) } MiB · { fmt.Sprintf("%g",plan.Resources.CPUs) } CPU</option>
+ }
+ <option value="custom" selected?={ resourcePlan(r)=="custom" }>{ v.T("plan_custom") }</option></select></label>
+ <div class="form-grid" data-custom-resources>
+ <label>{ v.T("resource_memory") }<input name="memory_mb" type="number" min="256" max="8192" step="1" required value={ strconv.Itoa(r.MemoryMB) }/></label>
+ <label>{ v.T("resource_cpu") }<input name="cpus" type="number" min="0.25" max="8" step="0.25" required value={ fmt.Sprintf("%g",r.CPUs) }/></label>
+ </div>
+ <p class="hint">{ v.T("resources_per_container") }</p>
+}
+
+templ siteResourcesForm(v view,site core.Site) {
+ <section class="resources-form"><h3>{ v.T("resources_title") }</h3>
+ @capacityOverview(v)
+ <p class="hint">{ v.T("resources_change_warning") }</p>
+ if !operationPending(site) && site.HealthError=="" && (site.Status==core.StatusRunning || site.Status==core.StatusStopped) {
+ <form action={ "/sites/"+site.ID+"/resources" } method="post" data-disable-on-submit data-progress-label={ v.T("in_progress") }>
+ <input type="hidden" name="csrf" value={ v.CSRF }/>
+ @resourceFields(v,core.SiteResources(site))
+ <button class="form-submit" disabled?={ v.Capacity==nil }>@icon("check")<span class="button-label">{ v.T("resources_save") }</span></button>
+ </form>
+ } else { <p class="hint">{ v.T("resources_repair_first") }</p> }
+ </section>
+}
+
+
+templ resourcePlanSettings(v view) {
+ <section class="form-card resources-plan-settings"><h2>{ v.T("plans_title") }</h2><p class="hint">{ v.T("plans_hint") }</p>
+ <form action="/settings/resource-plans" method="post" data-disable-on-submit data-progress-label={ v.T("in_progress") }>
+ <input type="hidden" name="csrf" value={ v.CSRF }/><input type="hidden" name="plan" value="custom"/>
+ <label>{ v.T("plan_name") }<input name="name" required maxlength="60"/></label>
+ <div class="form-grid"><label>{ v.T("resource_memory") }<input name="memory_mb" type="number" min="256" max="8192" required value="512"/></label><label>{ v.T("resource_cpu") }<input name="cpus" type="number" min="0.25" max="8" step="0.25" required value="0.5"/></label></div>
+ <p class="hint">{ v.T("resources_per_container") }</p>
+ <button class="form-submit">@icon("plus")<span class="button-label">{ v.T("plan_add") }</span></button>
+ </form>
+ if len(v.Plans)>0{
+ <div class="table-wrap"><table><thead><tr><th>{ v.T("plan_name") }</th><th>{ v.T("resource_memory") }</th><th>{ v.T("resource_cpu") }</th><th>{ v.T("actions") }</th></tr></thead><tbody>
+ for _,plan := range v.Plans {
+ <tr><td>{ plan.Name }</td><td>{ strconv.Itoa(plan.Resources.MemoryMB) } MiB</td><td>{ fmt.Sprintf("%g",plan.Resources.CPUs) }</td><td><form action="/settings/resource-plans/delete" method="post" data-disable-on-submit data-progress-label={ v.T("in_progress") }><input type="hidden" name="csrf" value={ v.CSRF }/><input type="hidden" name="id" value={ plan.ID }/><button class="danger icon-button" title={ v.T("plan_delete") } aria-label={ v.T("plan_delete") }>@icon("trash")</button></form></td></tr>
+ }
+ </tbody></table></div>
+ }
+ </section>
 }

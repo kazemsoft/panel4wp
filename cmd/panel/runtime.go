@@ -103,6 +103,12 @@ func (a *app) reconcileRuntime(ctx context.Context) error {
 				return errors.New("invalid worker service status")
 			}
 			site.HealthError = ""
+			if snapshot.Resources != nil {
+				if err := snapshot.Resources.Validate(); err != nil {
+					return err
+				}
+				site.MemoryMB, site.CPUs = snapshot.Resources.MemoryMB, snapshot.Resources.CPUs
+			}
 			if operationPending(site) {
 				receipt := snapshot.Operation
 				if receipt == nil || receipt.ID != site.Operation.ID {
@@ -144,10 +150,10 @@ func (a *app) reconcileRuntime(ctx context.Context) error {
 				switch site.Operation.Kind {
 				case "create":
 					site.Status, site.Error = core.StatusFailed, "Site creation response was interrupted. Retry creation to finish installation and obtain a new WordPress administrator password. Existing data and database credentials are preserved."
-				case "restore", "update":
+				case "restore", "update", "resources":
 					site.Status = snapshot.Status
 					if site.Operation.State != "succeeded" {
-						site.Error = "Restore or update was interrupted. Inspect the site before continuing; restore a retained safety backup if needed."
+						site.Error = "A restore, update, or resource change was interrupted. Inspect the saved configuration and site before continuing; restore a retained safety backup if data recovery is needed."
 					} else {
 						site.Error = snapshot.Detail
 					}

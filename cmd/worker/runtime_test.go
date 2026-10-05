@@ -94,7 +94,7 @@ func TestWorkerCommitsReceiptBeforeReplyAndRejectsReplay(t *testing.T) {
 	id := "0123456789abcdef"
 	w := &worker{root: base, token: strings.Repeat("t", 64), docker: &fakeDocker{}}
 	os.MkdirAll(w.siteDir(id), 0700)
-	os.WriteFile(filepath.Join(w.siteDir(id), "compose.yaml"), []byte("compose"), 0600)
+	os.WriteFile(filepath.Join(w.siteDir(id), "compose.yaml"), []byte(fmt.Sprintf(composeTemplate, id, 512, 1., id, 512, 1., id, "http://localhost")), 0600)
 	run := func() *httptest.ResponseRecorder {
 		r := httptest.NewRequest("POST", "/action", strings.NewReader(`{"id":"0123456789abcdef","action":"start"}`))
 		r.Header.Set("X-Worker-Token", w.token)

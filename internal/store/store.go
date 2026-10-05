@@ -36,15 +36,17 @@ func (s *Store) read() (map[string]core.Site, error) {
 	return sites, nil
 }
 
-func (s *Store) write(sites map[string]core.Site) error {
-	if err := os.MkdirAll(filepath.Dir(s.path), 0700); err != nil {
+func (s *Store) write(sites map[string]core.Site) error { return writeJSON(s.path, sites) }
+
+func writeJSON(path string, value any) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(sites, "", "  ")
+	b, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(filepath.Dir(s.path), ".sites-*")
+	f, err := os.CreateTemp(filepath.Dir(path), ".metadata-*")
 	if err != nil {
 		return err
 	}
@@ -64,10 +66,10 @@ func (s *Store) write(sites map[string]core.Site) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(f.Name(), s.path); err != nil {
+	if err := os.Rename(f.Name(), path); err != nil {
 		return err
 	}
-	dir, err := os.Open(filepath.Dir(s.path))
+	dir, err := os.Open(filepath.Dir(path))
 	if err == nil {
 		defer dir.Close()
 		_ = dir.Sync()

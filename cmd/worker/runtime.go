@@ -79,7 +79,7 @@ func (w *worker) trackOperation(req *http.Request, operationID string) (func(err
 		return nil, errors.New("invalid operation ID")
 	}
 	switch req.URL.Path {
-	case "/create", "/action", "/backup", "/restore", "/update":
+	case "/create", "/action", "/backup", "/restore", "/update", "/resources":
 	default:
 		return nil, errors.New("operation receipt not supported")
 	}
@@ -117,13 +117,17 @@ func (w *worker) trackOperation(req *http.Request, operationID string) (func(err
 	}
 	return func(operationErr error, result any) error {
 		op.State, op.FinishedAt = "succeeded", time.Now().UTC()
-		if operationErr != nil {
+		var rejected *admissionError
+		if operationErr != nil && !errors.As(operationErr, &rejected) {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			cleanupErr := w.quiesceSite(cleanupCtx, id, kind)
 			cancel()
 			if cleanupErr != nil {
 				return fmt.Errorf("failed operation could not be fenced: %w", cleanupErr)
 			}
+			op.State, op.Error = "failed", "Worker operation failed; inspect the activity log."
+		}
+		if operationErr != nil {
 			op.State, op.Error = "failed", "Worker operation failed; inspect the activity log."
 		}
 		if backup, ok := result.(core.Backup); ok {
@@ -135,15 +139,24 @@ func (w *worker) trackOperation(req *http.Request, operationID string) (func(err
 
 // Ask Docker for names and states only; never return inspect's environment/secrets.
 func (w *worker) runtime(ctx context.Context, id string) (core.SiteRuntime, error) {
+	return w.runtimeSnapshot(ctx, id, true)
+}
+
+func (w *worker) runtimeSnapshot(ctx context.Context, id string, recoverPending bool) (core.SiteRuntime, error) {
 	if !core.ValidID(id) {
 		return core.SiteRuntime{}, errors.New("invalid site ID")
 	}
 	snapshot := core.SiteRuntime{}
+	if configured, configErr := w.configuredResources(id); configErr == nil {
+		snapshot.Resources = &configured
+	} else if !errors.Is(configErr, os.ErrNotExist) {
+		return snapshot, configErr
+	}
 	op, err := w.loadOperation(id)
 	if err != nil {
 		return snapshot, err
 	}
-	if op != nil && op.State == "pending" {
+	if recoverPending && op != nil && op.State == "pending" {
 		// CLI cancellation does not stop Docker daemon jobs or database execs.
 		// Fence those before making the site available for any recovery action.
 		if err := w.quiesceSite(ctx, id, op.Kind); err != nil {
@@ -167,7 +180,7 @@ func (w *worker) runtime(ctx context.Context, id string) (core.SiteRuntime, erro
 	if len(ids) > 20 {
 		return snapshot, errors.New("unexpected number of site containers")
 	}
-	format := `{"name":{{json .Name}},"project":{{json (index .Config.Labels "com.docker.compose.project")}},"service":{{json (index .Config.Labels "com.docker.compose.service")}},"status":{{json .State.Status}},"health":{{if .State.Health}}{{json .State.Health.Status}}{{else}}""{{end}}}`
+	format := `{"name":{{json .Name}},"project":{{json (index .Config.Labels "com.docker.compose.project")}},"service":{{json (index .Config.Labels "com.docker.compose.service")}},"status":{{json .State.Status}},"memory":{{.HostConfig.Memory}},"cpus":{{.HostConfig.NanoCpus}},"health":{{with (index .State "Health")}}{{json .Status}}{{else}}""{{end}}}`
 	args := append([]string{"inspect", "--format", format}, ids...)
 	out, err = w.docker.Output(ctx, args...)
 	if err != nil {
@@ -203,6 +216,12 @@ func (w *worker) runtime(ctx context.Context, id string) (core.SiteRuntime, erro
 	} else {
 		snapshot.Status, snapshot.Detail = core.StatusUnhealthy, fmt.Sprintf("WordPress: %s %s; database: %s %s. Start the site and inspect its logs if the problem persists.", wp.Status, wp.Health, db.Status, db.Health)
 	}
+	if snapshot.Resources != nil && (snapshot.Status == core.StatusRunning || snapshot.Status == core.StatusStopped) {
+		r := *snapshot.Resources
+		if wp.Memory != int64(r.MemoryMB)*1024*1024 || db.Memory != int64(r.MemoryMB)*1024*1024 || wp.CPUs != int64(r.CPUs*1e9) || db.CPUs != int64(r.CPUs*1e9) {
+			snapshot.Status, snapshot.Detail = core.StatusUnhealthy, "Configured resources differ from Docker limits. Start the site to apply its saved configuration."
+		}
+	}
 	if snapshot.Status == core.StatusRunning {
 		if _, err := os.Stat(filepath.Join(w.routes, id+".caddy")); errors.Is(err, os.ErrNotExist) {
 			snapshot.Status, snapshot.Detail = core.StatusUnhealthy, "Domain route is missing. Inspect the server route configuration."
@@ -213,7 +232,10 @@ func (w *worker) runtime(ctx context.Context, id string) (core.SiteRuntime, erro
 	return snapshot, nil
 }
 
-type containerState struct{ Name, Project, Service, Status, Health string }
+type containerState struct {
+	Name, Project, Service, Status, Health string
+	Memory, CPUs                           int64
+}
 
 // A worker restart invalidates in-memory tool sessions, so close them before
 // accepting traffic. Site services and data are not changed.
@@ -281,7 +303,7 @@ func (w *worker) quiesceSite(ctx context.Context, id, kind string) error {
 		return err
 	}
 	switch kind {
-	case "restore", "update", "backup", "prepare-restore":
+	case "restore", "update", "backup", "prepare-restore", "resources":
 	default:
 		return nil
 	}

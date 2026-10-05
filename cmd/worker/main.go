@@ -126,7 +126,7 @@ secrets:
     file: ./secrets/admin_email
 `
 
-const wpInstallScript = `i=0; while [ ! -f wp-includes/version.php ] && [ "$i" -lt 120 ]; do i=$((i+1)); sleep 1; done; if [ ! -f wp-includes/version.php ]; then echo "WordPress files were not ready after 120 seconds" >&2; exit 1; fi; if wp core is-installed >/dev/null 2>&1; then wp user update admin --user_pass="$(cat /run/secrets/admin_password)" --user_email="$(cat /run/secrets/admin_email)"; else wp core install --url="$(cat /run/secrets/site_url)" --title="$(cat /run/secrets/site_title)" --admin_user=admin --admin_password="$(cat /run/secrets/admin_password)" --admin_email="$(cat /run/secrets/admin_email)" --skip-email; fi`
+const wpInstallScript = `i=0; while { [ ! -f wp-includes/version.php ] || [ ! -s wp-config.php ] || ! grep -q "require_once.*wp-settings\.php" wp-config.php; } && [ "$i" -lt 120 ]; do i=$((i+1)); sleep 1; done; if [ ! -f wp-includes/version.php ] || [ ! -s wp-config.php ] || ! grep -q "require_once.*wp-settings\.php" wp-config.php; then echo "WordPress files and configuration were not ready after 120 seconds" >&2; exit 1; fi; if wp core is-installed >/dev/null 2>&1; then wp user update admin --user_pass="$(cat /run/secrets/admin_password)" --user_email="$(cat /run/secrets/admin_email)"; else wp core install --url="$(cat /run/secrets/site_url)" --title="$(cat /run/secrets/site_title)" --admin_user=admin --admin_password="$(cat /run/secrets/admin_password)" --admin_email="$(cat /run/secrets/admin_email)" --skip-email; fi`
 
 const wpUpdateScript = `set -eu; wp core update; wp core update-db; wp plugin update --all; wp theme update --all`
 
@@ -962,7 +962,13 @@ func (w *worker) ServeHTTP(resp http.ResponseWriter, req *http.Request) {
 				http.Error(resp, "invalid request", http.StatusBadRequest)
 				return
 			}
-			err = w.create(ctx, body)
+			err = core.ValidateSite(body.Site)
+			if err == nil {
+				err = w.checkCapacity(ctx, body.Site.ID, core.SiteResources(body.Site))
+			}
+			if err == nil {
+				err = w.create(ctx, body)
+			}
 			reloadCaddy = err == nil
 		} else if req.URL.Path == "/action" {
 			var body struct{ ID, Action string }
@@ -970,7 +976,16 @@ func (w *worker) ServeHTTP(resp http.ResponseWriter, req *http.Request) {
 				http.Error(resp, "invalid request", http.StatusBadRequest)
 				return
 			}
-			err = w.action(ctx, body.ID, body.Action)
+			if body.Action == "start" {
+				var limits core.Resources
+				limits, err = w.configuredResources(body.ID)
+				if err == nil {
+					err = w.checkCapacity(ctx, body.ID, limits)
+				}
+			}
+			if err == nil {
+				err = w.action(ctx, body.ID, body.Action)
+			}
 			reloadCaddy = err == nil && body.Action == "delete"
 		} else if req.URL.Path == "/backup" {
 			var body core.BackupRequest
@@ -986,6 +1001,20 @@ func (w *worker) ServeHTTP(resp http.ResponseWriter, req *http.Request) {
 				return
 			}
 			err = w.databaseAction(ctx, body.ID, body.Action)
+		} else if req.URL.Path == "/resources" {
+			var body core.ResourceRequest
+			if json.NewDecoder(req.Body).Decode(&body) != nil {
+				http.Error(resp, "invalid request", http.StatusBadRequest)
+				return
+			}
+			result, err = w.changeResources(ctx, body)
+		} else if req.URL.Path == "/capacity" {
+			var body core.RuntimeRequest
+			if json.NewDecoder(req.Body).Decode(&body) != nil {
+				http.Error(resp, "invalid request", http.StatusBadRequest)
+				return
+			}
+			result, err = w.hostCapacity(ctx, body.SiteID)
 		} else if req.URL.Path == "/stats" {
 			var body core.StatsRequest
 			if decodeErr := json.NewDecoder(req.Body).Decode(&body); decodeErr != nil {
