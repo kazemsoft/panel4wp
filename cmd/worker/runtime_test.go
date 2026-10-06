@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/kazemsoft/panel4wp/internal/core"
+	"github.com/kazemsoft/panel4wp/internal/securitypolicy"
 )
 
 type runtimeDocker struct {
@@ -34,8 +35,9 @@ func (f *runtimeDocker) Output(_ context.Context, args ...string) ([]byte, error
 	return []byte(f.states), nil
 }
 func runtimeStates(wp, db, health string) string {
-	return fmt.Sprintf(`{"Name":"/wph-wp-0123456789abcdef","Project":"wph-0123456789abcdef","Service":"wordpress","Status":%q}
-{"Name":"/wph-db-0123456789abcdef","Project":"wph-0123456789abcdef","Service":"db","Status":%q,"Health":%q}`, wp, db, health)
+	opts, _ := json.Marshal([]string{"no-new-privileges:true", "seccomp=" + string(securitypolicy.Bytes())})
+	return fmt.Sprintf(`{"security_opts":%s,"Name":"/wph-wp-0123456789abcdef","Project":"wph-0123456789abcdef","Service":"wordpress","Status":%q}
+{"security_opts":%s,"Name":"/wph-db-0123456789abcdef","Project":"wph-0123456789abcdef","Service":"db","Status":%q,"Health":%q}`, opts, wp, opts, db, health)
 }
 func TestRuntimeUsesContainerStateAndProjectOwnership(t *testing.T) {
 	for _, tc := range []struct {
@@ -182,12 +184,19 @@ func TestFailedRestoreKeepsWordPressStopped(t *testing.T) {
 		manifest, _ := json.Marshal(backupManifest{Version: 1, SiteID: id, DatabaseSHA256: db, WordPressSHA256: wp})
 		os.WriteFile(filepath.Join(dir, "manifest.json"), manifest, 0600)
 	}
+	os.MkdirAll(w.siteDir(id), 0700)
+	os.WriteFile(filepath.Join(w.siteDir(id), "compose.yaml"), []byte(fmt.Sprintf(composeTemplate, id, 512, 1., id, 512, 1., id, "http://localhost")), 0600)
 	site := core.Site{ID: id, Domain: "test.localhost", Title: "Test", AdminEmail: "test@example.com"}
 	err := w.restore(context.Background(), core.RestoreRequest{Site: site, BackupID: "20261005T120000Z-12345678", SafetyBackupID: "20261005T120001Z-12345678"})
 	if err == nil {
 		t.Fatal("injected restore did not fail")
 	}
-	if len(f.calls) != 2 || !strings.Contains(strings.Join(f.calls[0], " "), "stop wordpress") {
+	for _, call := range f.calls {
+		if strings.Contains(strings.Join(call, " "), "up -d --wait wordpress") {
+			t.Fatal("failed restore restarted WordPress")
+		}
+	}
+	if len(f.calls) != 3 || !strings.Contains(strings.Join(f.calls[0], " "), "stop wordpress") {
 		t.Fatalf("failed restore restarted public WordPress: %v", f.calls)
 	}
 }

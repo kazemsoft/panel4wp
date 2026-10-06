@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -108,7 +109,10 @@ func TestDatabaseManagerLifecycleAndLegacyComposeUpgrade(t *testing.T) {
 	if err := os.MkdirAll(w.siteDir(id), 0700); err != nil {
 		t.Fatal(err)
 	}
-	legacy := "services:\n  cli:\n    image: wordpress:cli\nnetworks:\n  database:\n    internal: true\n"
+	legacy := fmt.Sprintf(composeTemplate, id, 512, 1., id, 512, 1., id, "http://localhost")
+	start := strings.Index(legacy, "  phpmyadmin:\n")
+	end := strings.Index(legacy, "  cli:\n")
+	legacy = legacy[:start] + legacy[end:]
 	if err := os.WriteFile(filepath.Join(w.siteDir(id), "compose.yaml"), []byte(legacy), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +164,7 @@ func TestUpdateSiteUsesIsolatedCLI(t *testing.T) {
 	if err := os.MkdirAll(w.siteDir(site.ID), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(w.siteDir(site.ID), "compose.yaml"), []byte("services: {}"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(w.siteDir(site.ID), "compose.yaml"), []byte(fmt.Sprintf(composeTemplate, site.ID, 512, 1., site.ID, 512, 1., site.ID, "http://localhost")), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := w.updateSite(context.Background(), core.UpdateRequest{Site: site}); err != nil {

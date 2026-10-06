@@ -51,9 +51,27 @@ Verified on local ARM64 Docker on 2026-10-05:
 - An oversized archive extraction fails at the quota while a separate safety file remains intact. This is a filesystem test, **not a WordPress/MariaDB restore acceptance test**.
 - A process running as UID33 can change the project ID of its own file and write 16 MiB outside an 8 MiB project limit. A lab seccomp filter blocks that ioctl. This deliberately reproduces why filesystem quotas alone are insufficient.
 
+### Writer protection
+
+Managed WordPress, MariaDB, phpMyAdmin, WP-CLI and backup/restore volume helpers now use a versioned production seccomp profile plus `no-new-privileges`. File commands and database imports executed inside services inherit the service filter. This is a prerequisite for hard quotas; it does not allocate or enable them.
+
+The profile is derived from the pinned, Apache-licensed [Moby baseline](../third_party/moby/README.md). It preserves unrelated baseline rules and the EPERM default, removes quota-control syscall allowances, and replaces the generic ioctl allowance with the complement of `FS_IOC_FSSETXATTR` and the native/compat `FS_IOC_SETFLAGS` commands. Rules match the low 32 bits because Linux truncates the command. A prefix partition proves that every other ioctl remains allowed. Adding narrow deny rules alongside a generic ioctl allow proved ineffective in the real Docker control test and is deliberately avoided. Unknown newer syscalls stay denied by the baseline default; kernel/API changes require review before updating the policy.
+
+Run the real container control and enforcement test:
+
+```sh
+tests/writer-policy/run.sh
+```
+
+It uses two disposable Docker volumes, without a host mount, socket, privilege flag or network during execution. An inode owner at UID33 can set its own attributes under Docker's default profile; the production profile returns EPERM for the forbidden commands and high-word/sign-extension variants. Ordinary read/write/fsync and an unrelated pipe ioctl still succeed. CI runs this test on AMD64; local ARM64 also passed. The smaller filter in the quota VM drill is only a lab filter and is never installed on managed sites.
+
+On worker startup, known saved Compose configurations are upgraded atomically; live containers and site data are preserved. Runtime inspection checks Docker's actual profile content and no-new-privileges for both WordPress and MariaDB. Existing services without the filter show a warning. Explicit **Start** recreates them using their existing volumes and briefly interrupts a running site. No profile activation occurs just because the worker restarts. Unfamiliar custom security configurations are left intact and require administrator inspection. Old sites without phpMyAdmin are supported.
+
+For a rollback while quotas remain disabled, retain the generated profile files and the site's Compose file: the preceding worker version can still start this standard Docker Compose configuration. Restore an installation-data backup if rolling back desired configuration; do not remove Docker volumes. No volume migration or project retagging occurs in this upgrade. A future quota-enabled rollback must separately verify enforcement and cannot rely on this procedure.
+
 ### Activation gates still open
 
-1. Protect every writer (WordPress, MariaDB, CLI, restore and file helpers) against changing project IDs or inheritance. Preserve Docker's default seccomp protections while denying quota attribute mutation, including applicable newer attribute syscalls. The small filter in the drill permits unrelated syscalls and **must not be used as a production profile**.
+1. Writer profiles are implemented and container enforcement is tested. Repeat the full writer lifecycle **on actual quota-enabled storage**, including new kernel attribute APIs, as part of the real-site activation gate below.
 2. Gate automatic Docker/host restarts on verified quota enforcement. Existing `unless-stopped` policies can restart containers before the worker checks storage; quota-enabled sites must not use that path without a verified gate.
 3. Allocate project IDs durably, verify filesystem-global ownership/collisions, tag existing data with every writer stopped, and recover partial tagging after interruption. Shared hardlinks, symlinks and unrelated projects need explicit acceptance tests.
 4. Test real WordPress/MariaDB activation, limit reductions below usage, backup/restore at capacity, interrupted operations, and failure recovery on a dedicated Linux Docker host. Preserve safety backups and leave failed restores stopped.
@@ -70,3 +88,5 @@ Automated tests cover invalid/non-finite values, both-container accounting, host
 The live Docker drill on 2026-10-05 passed named-plan creation/application/deletion, custom provisioning, a running resource change, a preset change, a stopped resource change, and over-capacity rejection. Docker inspection confirmed both containers' real RAM/CPU limits. An uploaded file and a database table row survived each recreation. The drill then persisted a new Compose target and a pending receipt, killed and explicitly restarted the worker, and confirmed that reconciliation detected the mismatch. Explicit Start applied the target limits while preserving the same file and database row. All disposable sites, volumes, backups, and test templates were removed; the existing demo remained running.
 
 The drill also exposed and fixed readiness during initial provisioning: WP-CLI now waits for the completed `wp-config.php` bootstrap as well as WordPress core files. Docker runtime inspection handles containers with no healthcheck. A shell regression test delays the configuration write and verifies that WP-CLI does not run early.
+
+The writer-profile live drill on 2026-10-06 passed fresh WordPress/MariaDB provisioning, actual profile inspection, UID33 mutation-denial checks inside both services and phpMyAdmin, upload/download, a database row write, backup, WP-CLI core/plugin/theme updates, and a stopped-site restore. The restored file matched its original bytes and the database table recovered its original row. A worker restart preserved the applied profile and healthy status. Disposable site data was removed afterward. Explicit Start applied the profile to the existing demo; it remained healthy with its original named WordPress/database volumes. Hard quotas remained disabled throughout this drill.

@@ -23,8 +23,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
-      - run: go generate ./cmd/panel
-      - run: git diff --exit-code -- cmd/panel/views_templ.go
+      - run: go generate ./cmd/panel ./internal/securitypolicy
+      - run: git diff --exit-code -- cmd/panel/views_templ.go internal/securitypolicy/writer-v1.json
+      - run: tests/writer-policy/run.sh
+        timeout-minutes: 5
       - run: php --version
       - run: go test -race ./...
       - run: go vet ./...

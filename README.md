@@ -114,6 +114,8 @@ The Sites page can request a live resource snapshot for every running site. It d
 
 The same refresh measures the real disk space occupied by each site's WordPress volume, MariaDB volume, and local backups. Hard filesystem quotas are not enforced yet.
 
+Managed writers now use a versioned seccomp profile that prevents quota attribute changes while preserving other Docker baseline protections. Existing sites show a service warning until **Start** applies the saved profile using the same volumes. See [writer protection and upgrade guidance](docs/RESOURCES.md#writer-protection).
+
 Resources also checks the site's backing filesystems and actual kernel support for project-quota enforcement. This read-only result is shown separately from an assigned quota; activation remains in development. A reproducible [isolated Linux VM drill](tests/quota-vm/README.md) tests the proposed storage backend without changing host volumes. See [hard disk quota progress and acceptance gates](docs/RESOURCES.md#hard-disk-quotas).
 
 The **Back up and update WordPress** action first creates and records a verified safety backup. It then updates WordPress core, runs database migrations, and updates all plugins and themes through the site's isolated WP-CLI service. The safety backup remains available for an in-place restore if an extension update causes a regression.
@@ -161,3 +163,7 @@ docker compose config --quiet
 ```
 
 Do not commit `.env` or `data/`; both are ignored by Git and excluded from Docker build contexts.
+
+## Third-party notices
+
+The seccomp baseline and derived writer profile include Apache 2.0 material from Moby. See [source, derivation and license](third_party/moby/README.md).

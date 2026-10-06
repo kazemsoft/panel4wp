@@ -361,6 +361,13 @@ func (w *worker) changeResources(ctx context.Context, req core.ResourceRequest) 
 	if err != nil {
 		return r, err
 	}
+	updated, err = w.writerCompose(req.Site.ID, updated)
+	if err != nil {
+		return r, err
+	}
+	if _, err := w.writeWriterProfile(req.Site.ID); err != nil {
+		return r, err
+	}
 	if err := w.databaseAction(ctx, req.Site.ID, "stop"); err != nil {
 		return r, err
 	}

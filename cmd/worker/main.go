@@ -300,6 +300,9 @@ func (w *worker) databaseAction(ctx context.Context, id, action string) error {
 	}
 	switch action {
 	case "start":
+		if err := w.ensureWriterPolicy(id); err != nil {
+			return err
+		}
 		if err := w.docker.Run(ctx, w.composeArgs(id, "--profile", "tools", "up", "-d", "phpmyadmin")...); err != nil {
 			return err
 		}
@@ -392,6 +395,9 @@ func (w *worker) updateSite(ctx context.Context, req core.UpdateRequest) error {
 		return err
 	}
 	if _, err := os.Stat(filepath.Join(w.siteDir(req.Site.ID), "compose.yaml")); err != nil {
+		return err
+	}
+	if err := w.ensureWriterPolicy(req.Site.ID); err != nil {
 		return err
 	}
 	return w.docker.Run(ctx, w.composeArgs(req.Site.ID, "run", "--rm", "--name", "wph-cli-"+req.Site.ID, "--no-deps", "cli", "sh", "-c", wpUpdateScript)...)
@@ -592,7 +598,13 @@ func (w *worker) backup(ctx context.Context, req core.BackupRequest) (core.Backu
 		return core.Backup{}, err
 	}
 	volume := "wph-" + req.Site.ID + "_wordpress_data"
-	if err := w.docker.Run(ctx, "run", "--rm", "--name", "wph-job-"+req.Site.ID, "--label", "panel4wp.role=job", "--label", "panel4wp.site="+req.Site.ID, "--volume", volume+":/source:ro", "--volume", tmp+":/backup", "alpine:3.22", "tar", "-czf", "/backup/wordpress.tar.gz", "-C", "/source", "."); err != nil {
+	securityArgs, err := w.writerSecurityArgs(req.Site.ID)
+	if err != nil {
+		return core.Backup{}, err
+	}
+	helperArgs := append([]string{"run"}, securityArgs...)
+	helperArgs = append(helperArgs, "--rm", "--name", "wph-job-"+req.Site.ID, "--label", "panel4wp.role=job", "--label", "panel4wp.site="+req.Site.ID, "--volume", volume+":/source:ro", "--volume", tmp+":/backup", "alpine:3.22", "tar", "-czf", "/backup/wordpress.tar.gz", "-C", "/source", ".")
+	if err := w.docker.Run(ctx, helperArgs...); err != nil {
 		return core.Backup{}, err
 	}
 	dbHash, err := fileSHA256(filepath.Join(tmp, "database.sql"))
@@ -746,12 +758,24 @@ func (w *worker) restore(ctx context.Context, req core.RestoreRequest) error {
 		return fmt.Errorf("safety backup is missing or invalid: %w", err)
 	}
 	id := req.Site.ID
+	if err := w.ensureWriterPolicy(id); err != nil {
+		return err
+	}
 	if err := w.docker.Run(ctx, w.composeArgs(id, "stop", "wordpress")...); err != nil {
+		return err
+	}
+	if err := w.docker.Run(ctx, w.composeArgs(id, "up", "-d", "--wait", "db")...); err != nil {
 		return err
 	}
 	volume := "wph-" + id + "_wordpress_data"
 	restoreFiles := `rm -rf /target/* /target/.[!.]* /target/..?*; tar -xzf /backup/wordpress.tar.gz -C /target`
-	if err := w.docker.Run(ctx, "run", "--rm", "--name", "wph-job-"+req.Site.ID, "--label", "panel4wp.role=job", "--label", "panel4wp.site="+req.Site.ID, "--volume", volume+":/target", "--volume", backupDir+":/backup:ro", "alpine:3.22", "sh", "-c", restoreFiles); err != nil {
+	securityArgs, err := w.writerSecurityArgs(req.Site.ID)
+	if err != nil {
+		return err
+	}
+	helperArgs := append([]string{"run"}, securityArgs...)
+	helperArgs = append(helperArgs, "--rm", "--name", "wph-job-"+req.Site.ID, "--label", "panel4wp.role=job", "--label", "panel4wp.site="+req.Site.ID, "--volume", volume+":/target", "--volume", backupDir+":/backup:ro", "alpine:3.22", "sh", "-c", restoreFiles)
+	if err := w.docker.Run(ctx, helperArgs...); err != nil {
 		return err
 	}
 	dbContainer := "wph-db-" + id
@@ -764,7 +788,7 @@ func (w *worker) restore(ctx context.Context, req core.RestoreRequest) error {
 	if err := w.docker.Run(ctx, "exec", dbContainer, "sh", "-c", restoreDB); err != nil {
 		return err
 	}
-	if err := w.docker.Run(ctx, w.composeArgs(id, "start", "wordpress")...); err != nil {
+	if err := w.docker.Run(ctx, w.composeArgs(id, "up", "-d", "--wait", "wordpress")...); err != nil {
 		return err
 	}
 	return nil
@@ -819,7 +843,14 @@ func (w *worker) create(ctx context.Context, req core.CreateRequest) error {
 	}
 	memory, cpus := core.ResourceLimits(req.Site)
 	compose := fmt.Sprintf(composeTemplate, req.Site.ID, memory, cpus, req.Site.ID, memory, cpus, req.Site.ID, strconv.Quote(w.databaseURL(req.Site.ID)))
-	if err := os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte(compose), 0600); err != nil {
+	hardened, err := w.writerCompose(req.Site.ID, []byte(compose))
+	if err != nil {
+		return err
+	}
+	if _, err := w.writeWriterProfile(req.Site.ID); err != nil {
+		return err
+	}
+	if err := atomicConfig(filepath.Join(dir, "compose.yaml"), hardened); err != nil {
 		return err
 	}
 	if err := w.docker.Run(ctx, w.composeArgs(req.Site.ID, "up", "-d", "--wait")...); err != nil {
@@ -878,11 +909,17 @@ func (w *worker) action(ctx context.Context, id, action string) error {
 	}
 	switch action {
 	case "prepare-restore":
+		if err := w.ensureWriterPolicy(id); err != nil {
+			return err
+		}
 		if err := w.docker.Run(ctx, w.composeArgs(id, "stop", "wordpress")...); err != nil {
 			return err
 		}
 		return w.docker.Run(ctx, w.composeArgs(id, "up", "-d", "--wait", "db")...)
 	case "start":
+		if err := w.ensureWriterPolicy(id); err != nil {
+			return err
+		}
 		if err := w.docker.Run(ctx, w.composeArgs(id, "up", "-d", "--wait")...); err != nil {
 			return err
 		}
@@ -1151,6 +1188,9 @@ func main() {
 		log.Fatal(err)
 	}
 	if err := w.removeStaleDatabaseTools(migrateCtx); err != nil {
+		log.Fatal(err)
+	}
+	if err := w.migrateWriterPolicies(); err != nil {
 		log.Fatal(err)
 	}
 	server := &http.Server{Addr: ":8081", Handler: w, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
