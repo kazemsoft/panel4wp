@@ -149,9 +149,13 @@ func (dockerRunner) Run(ctx context.Context, args ...string) error {
 
 func (dockerRunner) Output(ctx context.Context, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "docker", args...)
-	out, err := cmd.CombinedOutput()
+	// Docker warnings belong to stderr, never to JSON/text protocol output.
+	// Keep diagnostics on failures while returning only stdout on success.
+	var diagnostics bytes.Buffer
+	cmd.Stderr = &diagnostics
+	out, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("docker %s failed: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+		return nil, fmt.Errorf("docker %s failed: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)+diagnostics.String()))
 	}
 	return out, nil
 }

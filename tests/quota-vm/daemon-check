@@ -18,6 +18,7 @@ case "$1" in
  setup)
   mkdir /quota/daemon-proof
   tar -cf - -C / bin/busybox bin/sh lib/ld-musl-*.so.1 | docker import - guard-canary:lab >/dev/null
+  tar -cf - -C / usr/local/bin/storage-probe | docker import - inventory-probe:lab >/dev/null
   for policy in no unless-stopped; do
    docker run -d --name "canary-$policy" --restart "$policy" --network none \
     --mount type=bind,src=/quota/daemon-proof,dst=/proof guard-canary:lab \
@@ -29,6 +30,7 @@ case "$1" in
   done
   test "$(wc -l < /quota/daemon-proof/no)" = 1
   test "$(wc -l < /quota/daemon-proof/unless-stopped)" = 1
+  PANEL4WP_QUOTA_VM_PHASE=setup /lab/quota-registry-check -test.run '^TestQuotaRegistryNativeVM$' -test.v
   ;;
  reboot)
   # The filesystem is now mounted with noquota. The no-policy canary must
@@ -43,6 +45,7 @@ case "$1" in
   test "$(wc -l < /quota/daemon-proof/unless-stopped)" = 2
   test "$(docker inspect -f '{{.State.Running}}' canary-unless-stopped)" = true
   echo DOCKER_RESTART_NO_PREVENTS_UNVERIFIED_BOOT_PASS
+  PANEL4WP_QUOTA_VM_PHASE=reboot /lab/quota-registry-check -test.run '^TestQuotaRegistryNativeVM$' -test.v
   ;;
  *) exit 1 ;;
 esac

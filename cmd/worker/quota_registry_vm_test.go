@@ -1,0 +1,86 @@
+package main
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// Opt-in fixture owned by tests/quota-vm; never run against the host daemon.
+func TestQuotaRegistryNativeVM(t *testing.T) {
+	phase := os.Getenv("PANEL4WP_QUOTA_VM_PHASE")
+	if phase == "" {
+		t.Skip("requires the isolated quota VM")
+	}
+	if _, err := os.Stat("/quota/guard-uuid"); err != nil {
+		t.Fatal("missing VM fixture")
+	}
+	ctx := context.Background()
+	docker := dockerRunner{}
+	image, err := docker.Output(ctx, "image", "inspect", "--format", "{{.Id}}", "inventory-probe:lab")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := &worker{root: "/quota/registry-state", docker: docker, storageImage: strings.TrimSpace(string(image))}
+	first, second := "4444444444444444", "5555555555555555"
+	if phase == "setup" {
+		if err := os.Mkdir(w.root, 0700); err != nil {
+			t.Fatal(err)
+		}
+		for _, id := range []string{first, second} {
+			registrySite(t, w, id)
+			for _, volume := range []string{"wordpress_data", "database_data"} {
+				if err := docker.Run(ctx, "volume", "create", "--label", "com.docker.compose.project=wph-"+id, "--label", "com.docker.compose.volume="+volume, "wph-"+id+"_"+volume); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		if err := docker.Run(ctx, "run", "--rm", "--network", "none", "--volume", "wph-"+first+"_wordpress_data:/data", "guard-canary:lab", "/bin/sh", "-c", "echo registry-preserved > /data/seed"); err != nil {
+			t.Fatal(err)
+		}
+		a, err := w.reserveQuotaProject(ctx, first)
+		if err != nil {
+			out, probeErr := w.runStorageProbe(ctx, first, "--inventory")
+			t.Fatalf("reservation: %v; native output: %s; probe: %v", err, out, probeErr)
+		}
+		b, err := w.reserveQuotaProject(ctx, second)
+		if err != nil || a.ProjectID == b.ProjectID {
+			t.Fatal(a, b, err)
+		}
+		restarted := &worker{root: w.root, docker: docker, storageImage: w.storageImage}
+		retry, err := restarted.reserveQuotaProject(ctx, first)
+		if err != nil || retry != a {
+			t.Fatal("native retry changed identifier", retry, err)
+		}
+		if marked, err := w.quotaMarked(first); marked || err != nil {
+			t.Fatal("reservation enabled quota", err)
+		}
+		t.Log("NATIVE_QUOTA_REGISTRY_RESERVATION_PASS")
+	} else if phase == "reboot" {
+		path := filepath.Join(w.root, ".quota", "projects.json")
+		before, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ledger, err := w.loadQuotaLedger(false)
+		if err != nil || len(ledger.Reservations) != 2 {
+			t.Fatal("reboot lost ledger", ledger, err)
+		}
+		if entry, err := w.reserveQuotaProject(ctx, first); err == nil || entry.ProjectID != 0 {
+			t.Fatal("unenforced storage accepted", entry, err)
+		}
+		after, _ := os.ReadFile(path)
+		if string(before) != string(after) {
+			t.Fatal("rejection rewrote reservations")
+		}
+		out, err := docker.Output(ctx, "run", "--rm", "--network", "none", "--volume", "wph-"+first+"_wordpress_data:/data:ro", "guard-canary:lab", "/bin/busybox", "cat", "/data/seed")
+		if err != nil || strings.TrimSpace(string(out)) != "registry-preserved" {
+			t.Fatal("reservation lost volume data", err)
+		}
+		t.Log("NATIVE_QUOTA_REGISTRY_REBOOT_AND_REJECTION_PASS")
+	} else {
+		t.Fatal("unknown VM phase")
+	}
+}

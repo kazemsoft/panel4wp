@@ -116,7 +116,7 @@ The same refresh measures the real disk space occupied by each site's WordPress 
 
 Managed writers now use a versioned seccomp profile that prevents quota attribute changes while preserving other Docker baseline protections. Existing sites show a service warning until **Start** applies the saved profile using the same volumes. See [writer protection and upgrade guidance](docs/RESOURCES.md#writer-protection).
 
-A verified restart gate is implemented for future quota-managed sites; allocation and activation are still pending. It checks persisted startup intent and real kernel enforcement before launching writers. Ordinary sites retain their current restart behavior.
+A verified restart gate, provisional durable project-ID reservations and read-only ownership audits are implemented for future quota-managed sites; safe tagging and activation are still pending. It checks persisted startup intent and real kernel enforcement before launching writers. Ordinary sites retain their current restart behavior.
 
 Resources also checks the site's backing filesystems and actual kernel support for project-quota enforcement. This read-only result is shown separately from an assigned quota; activation remains in development. A reproducible [isolated Linux VM drill](tests/quota-vm/README.md) tests the proposed storage backend without changing host volumes. See [hard disk quota progress and acceptance gates](docs/RESOURCES.md#hard-disk-quotas).
 

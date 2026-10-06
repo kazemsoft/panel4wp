@@ -80,6 +80,8 @@ static int guard(int wp, int db, const char *id_text, const char *bytes_text, co
     return 0;
 }
 
+#include "storage-inventory.h"
+
 int main(int argc, char **argv) {
     int wp = open("/quota-wordpress", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     int db = open("/quota-database", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
@@ -108,6 +110,9 @@ int main(int argc, char **argv) {
     if (argc == 2 && !strcmp(argv[1], "--identity")) {
         if (!same || af.f_type != XFS_SUPER_MAGIC) return 1;
         char identity[33]; if (!fs_identity(wp, identity)) return 1; puts(identity); return 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "--inventory")) {
+        return inventory(wp, db, &a, &b, same, accounting, enforcement);
     }
     if (argc == 5 && !strcmp(argv[1], "--guard")) {
         return guard(wp, db, argv[2], argv[3], argv[4], &af, same, accounting, enforcement);

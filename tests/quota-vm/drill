@@ -39,6 +39,36 @@ mount --bind /other/database /quota-database
 storage-probe | jq -e '.reason == "different-filesystems" and (.same_filesystem | not)'
 umount /quota-database
 mount --bind /quota/database /quota-database
+mkdir /quota/unrelated
+printf 'unrelated preserved' > /quota/unrelated/seed
+i=0
+while test "$i" -lt 75; do touch "/quota/unrelated/page-$i"; i=$((i + 1)); done
+xfs_quota -x -c 'project -s -p /quota/unrelated 4000000001' /quota
+xfs_quota -x -c 'limit -p bhard=1m 4000000002' /quota
+storage-probe --inventory | tee /tmp/inventory.json | jq -e '.verified and (.project_ids | index(4000000001) != null and index(4000000002) != null) and .wordpress_inodes == 2 and .database_inodes == 1' || { cat /tmp/inventory.json; exit 1; }
+storage-probe-small --inventory | jq -e '(.verified | not) and .reason == "scan-limit" and .project_ids == []'
+ln -s /quota/unrelated/seed /quota/wordpress/link
+storage-probe --inventory | jq -e '(.verified | not) and .reason == "symlink" and .project_ids == []'
+rm /quota/wordpress/link
+ln /quota/wordpress/seed /quota/shared-hardlink
+storage-probe --inventory | jq -e '(.verified | not) and .reason == "hardlink"'
+rm /quota/shared-hardlink
+mkfifo /quota/wordpress/fifo
+storage-probe --inventory | jq -e '(.verified | not) and .reason == "special-file"'
+rm /quota/wordpress/fifo
+mkdir /quota/wordpress/mounted
+# Mount inside the probe's view; the earlier root bind is private and does not
+# propagate a later mount created under the original /quota/wordpress path.
+mount --bind /quota/unrelated /quota-wordpress/mounted
+storage-probe --inventory | tee /tmp/bind-inventory.json | jq -e '(.verified | not) and .reason == "cross-mount"' || { cat /tmp/bind-inventory.json; exit 1; }
+umount /quota-wordpress/mounted
+rmdir /quota/wordpress/mounted
+xfs_io -c 'chproj 4000000003' /quota/wordpress/seed
+storage-probe --inventory | jq -e '(.verified | not) and .reason == "foreign-project"'
+xfs_io -c 'chproj 0' /quota/wordpress/seed
+storage-probe --inventory | jq -e '.verified'
+test "$(cat /quota/unrelated/seed)" = 'unrelated preserved'
+echo GLOBAL_PROJECT_CENSUS_AND_SAFE_TREE_AUDIT_PASS
 xfs_quota -x -c "project -s -p /quota/wordpress -p /quota/database $project" /quota
 xfs_quota -x -c "limit -p bhard=8m $project" /quota
 uuid=$(storage-probe --identity)

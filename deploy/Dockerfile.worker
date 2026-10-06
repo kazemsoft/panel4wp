@@ -8,6 +8,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/worker ./cmd/worke
 FROM alpine:3.22 AS storage-probe
 RUN apk add --no-cache build-base linux-headers xfsprogs-dev util-linux-dev
 COPY deploy/storage-probe.c /src/storage-probe.c
+COPY deploy/storage-inventory.h /src/storage-inventory.h
 RUN cc -std=c11 -Wall -Wextra -Werror -O2 -static /src/storage-probe.c -o /storage-probe
 
 FROM docker:cli
