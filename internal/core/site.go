@@ -260,13 +260,14 @@ func ResourceLimits(s Site) (int, float64) {
 
 // Operation is a durable receipt. Pending operations are never replayed automatically.
 type Operation struct {
-	ID         string    `json:"id"`
-	Kind       string    `json:"kind"`
-	State      string    `json:"state"`
-	StartedAt  time.Time `json:"started_at"`
-	FinishedAt time.Time `json:"finished_at,omitempty"`
-	Error      string    `json:"error,omitempty"`
-	Backup     *Backup   `json:"backup,omitempty"`
+	ID                string    `json:"id"`
+	Kind              string    `json:"kind"`
+	State             string    `json:"state"`
+	StartedAt         time.Time `json:"started_at"`
+	FinishedAt        time.Time `json:"finished_at,omitempty"`
+	Error             string    `json:"error,omitempty"`
+	Backup            *Backup   `json:"backup,omitempty"`
+	AdmissionRejected bool      `json:"admission_rejected,omitempty"`
 }
 type RuntimeRequest struct {
 	SiteID string `json:"site_id"`

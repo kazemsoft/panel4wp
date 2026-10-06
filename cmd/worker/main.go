@@ -167,15 +167,16 @@ func (dockerRunner) Input(ctx context.Context, input []byte, args ...string) err
 }
 
 type worker struct {
-	root        string
-	backupsRoot string
-	routes      string
-	token       string
-	panelDomain string
-	docker      runner
-	executionMu sync.Mutex
-	toolsMu     sync.Mutex
-	toolTimers  map[string]*time.Timer
+	root         string
+	backupsRoot  string
+	routes       string
+	token        string
+	panelDomain  string
+	docker       runner
+	storageImage string // Immutable identity cached per worker process.
+	executionMu  sync.Mutex
+	toolsMu      sync.Mutex
+	toolTimers   map[string]*time.Timer
 }
 
 type backupManifest struct {
@@ -295,7 +296,10 @@ func (w *worker) scheduleDatabaseStop(id string) {
 	})
 }
 
-func (w *worker) databaseAction(ctx context.Context, id, action string) error {
+func (w *worker) databaseAction(ctx context.Context, id, action string) (err error) {
+	if action == "start" {
+		defer func() { err = w.finishQuotaWrite(ctx, id, err) }()
+	}
 	if !core.ValidID(id) {
 		return errors.New("invalid site ID")
 	}
@@ -307,6 +311,9 @@ func (w *worker) databaseAction(ctx context.Context, id, action string) error {
 	}
 	switch action {
 	case "start":
+		if err := w.quotaPreflight(ctx, id); err != nil {
+			return err
+		}
 		if err := w.ensureWriterPolicy(id); err != nil {
 			return err
 		}
@@ -397,7 +404,11 @@ func (w *worker) stats(ctx context.Context, req core.StatsRequest) (map[string]c
 	return result, nil
 }
 
-func (w *worker) updateSite(ctx context.Context, req core.UpdateRequest) error {
+func (w *worker) updateSite(ctx context.Context, req core.UpdateRequest) (err error) {
+	defer func() { err = w.finishQuotaWrite(ctx, req.Site.ID, err) }()
+	if err := w.quotaPreflight(ctx, req.Site.ID); err != nil {
+		return err
+	}
 	if err := core.ValidateSite(req.Site); err != nil {
 		return err
 	}
@@ -483,6 +494,9 @@ func phpValue(value string) string {
 }
 
 func (w *worker) applyMail(ctx context.Context, req settings.ApplyRequest) error {
+	if err := w.quotaPreflight(ctx, req.SiteID); err != nil {
+		return err
+	}
 	if !core.ValidID(req.SiteID) {
 		return errors.New("invalid site ID")
 	}
@@ -545,6 +559,10 @@ func (w *worker) migrateLegacyNetworks(ctx context.Context) error {
 		}
 		running, inspectErr := w.docker.Output(ctx, "inspect", "--format", "{{.State.Running}}", "wph-wp-"+id)
 		if inspectErr == nil && strings.TrimSpace(string(running)) == "true" {
+			if err := w.quotaPreflight(ctx, id); err != nil {
+				log.Printf("quota site %s network migration needs inspection", id)
+				continue
+			}
 			if err := w.docker.Run(ctx, w.composeArgs(id, "up", "-d", "--wait")...); err != nil {
 				log.Printf("migrate site %s: %v; inspect this site before restarting it", id, err)
 			}
@@ -576,6 +594,9 @@ func fileSHA256(path string) (string, error) {
 }
 
 func (w *worker) backup(ctx context.Context, req core.BackupRequest) (core.Backup, error) {
+	if err := w.quotaPreflight(ctx, req.Site.ID); err != nil {
+		return core.Backup{}, err
+	}
 	if err := core.ValidateSite(req.Site); err != nil {
 		return core.Backup{}, err
 	}
@@ -718,6 +739,9 @@ func (w *worker) readFile(ctx context.Context, req core.FileRequest) (core.FileC
 }
 
 func (w *worker) writeFile(ctx context.Context, req core.FileRequest) error {
+	if err := w.quotaPreflight(ctx, req.SiteID); err != nil {
+		return err
+	}
 	if err := w.validateFileRequest(req, false); err != nil {
 		return err
 	}
@@ -728,6 +752,9 @@ func (w *worker) writeFile(ctx context.Context, req core.FileRequest) error {
 }
 
 func (w *worker) fileAction(ctx context.Context, req core.FileRequest, action string) error {
+	if err := w.quotaPreflight(ctx, req.SiteID); err != nil {
+		return err
+	}
 	if err := w.validateFileRequest(req, false); err != nil {
 		return err
 	}
@@ -741,6 +768,9 @@ func (w *worker) fileAction(ctx context.Context, req core.FileRequest, action st
 }
 
 func (w *worker) moveFile(ctx context.Context, req core.FileRequest) error {
+	if err := w.quotaPreflight(ctx, req.SiteID); err != nil {
+		return err
+	}
 	if err := w.validateFileRequest(req, false); err != nil {
 		return err
 	}
@@ -750,7 +780,11 @@ func (w *worker) moveFile(ctx context.Context, req core.FileRequest) error {
 	return w.docker.Run(ctx, "exec", "--user", "33:33", "wph-wp-"+req.SiteID, "php", "-d", "display_errors=stderr", "-d", "open_basedir=/var/www/html/wp-content", "-r", moveFilePHP, req.Path, req.Destination)
 }
 
-func (w *worker) restore(ctx context.Context, req core.RestoreRequest) error {
+func (w *worker) restore(ctx context.Context, req core.RestoreRequest) (err error) {
+	defer func() { err = w.finishQuotaWrite(ctx, req.Site.ID, err) }()
+	if err := w.quotaPreflight(ctx, req.Site.ID); err != nil {
+		return err
+	}
 	if err := core.ValidateSite(req.Site); err != nil {
 		return err
 	}
@@ -798,10 +832,13 @@ func (w *worker) restore(ctx context.Context, req core.RestoreRequest) error {
 	if err := w.docker.Run(ctx, w.composeArgs(id, "up", "-d", "--wait", "wordpress")...); err != nil {
 		return err
 	}
-	return nil
+	return w.setQuotaIntent(id, "running")
 }
 
 func (w *worker) create(ctx context.Context, req core.CreateRequest) error {
+	if marked, err := w.quotaMarked(req.Site.ID); marked || err != nil {
+		return errors.New("quota-managed sites cannot be reprovisioned by the legacy create path")
+	}
 	if err := core.ValidateSite(req.Site); err != nil {
 		return err
 	}
@@ -910,20 +947,22 @@ func (w *worker) action(ctx context.Context, id, action string) error {
 		return err
 	}
 	if action == "stop" || action == "delete" {
+		if marked, err := w.quotaMarked(id); marked || err != nil {
+			if err := w.fenceQuotaSite(ctx, id, "stopped"); err != nil {
+				return err
+			}
+		}
 		if err := w.databaseAction(ctx, id, "stop"); err != nil {
 			return fmt.Errorf("stop database manager: %w", err)
 		}
 	}
 	switch action {
 	case "prepare-restore":
-		if err := w.ensureWriterPolicy(id); err != nil {
-			return err
-		}
-		if err := w.docker.Run(ctx, w.composeArgs(id, "stop", "wordpress")...); err != nil {
-			return err
-		}
-		return w.docker.Run(ctx, w.composeArgs(id, "up", "-d", "--wait", "db")...)
+		return w.prepareRestore(ctx, id)
 	case "start":
+		if marked, err := w.quotaMarked(id); marked || err != nil {
+			return w.startQuotaSite(ctx, id)
+		}
 		if err := w.ensureWriterPolicy(id); err != nil {
 			return err
 		}
@@ -1191,6 +1230,9 @@ func main() {
 	if err := w.recoverInterruptedJobs(migrateCtx); err != nil {
 		log.Fatal(err)
 	}
+	if err := w.reconcileQuotaSites(migrateCtx, true); err != nil {
+		log.Fatal(err)
+	}
 	if err := w.migrateLegacyNetworks(migrateCtx); err != nil {
 		log.Fatal(err)
 	}
@@ -1200,6 +1242,7 @@ func main() {
 	if err := w.migrateWriterPolicies(); err != nil {
 		log.Fatal(err)
 	}
+	go w.runQuotaSupervisor(context.Background())
 	server := &http.Server{Addr: ":8081", Handler: w, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
 	log.Fatal(server.ListenAndServe())
 }

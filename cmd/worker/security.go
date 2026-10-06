@@ -53,6 +53,12 @@ func (w *worker) writerCompose(id string, data []byte) ([]byte, error) {
 		}
 	}
 	if strings.Count(text, guard) == writers && strings.Count(text, "    security_opt:") == writers {
+		if marked, err := w.quotaMarked(id); marked || err != nil {
+			if err != nil {
+				return nil, err
+			}
+			return quotaRestartCompose(data)
+		}
 		return data, nil
 	}
 	if strings.Count(text, legacy) != writers-1 || strings.Count(text, "    security_opt:") != writers-1 || strings.Count(text, "  cli:\n") != 1 {
@@ -60,6 +66,12 @@ func (w *worker) writerCompose(id string, data []byte) ([]byte, error) {
 	}
 	text = strings.ReplaceAll(text, legacy, guard)
 	text = strings.Replace(text, "  cli:\n", "  cli:\n"+guard, 1)
+	if marked, err := w.quotaMarked(id); marked || err != nil {
+		if err != nil {
+			return nil, err
+		}
+		return quotaRestartCompose([]byte(text))
+	}
 	return []byte(text), nil
 }
 

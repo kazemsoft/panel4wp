@@ -20,7 +20,13 @@ Panel markers live in `data/panel/sites.json`; worker receipts live in `data/sit
 
 Worker mutations are serialized. Runtime inspection waits for the active operation to finish by reporting a busy response, including when only the panel was restarted. After worker restart, owned CLI/volume helpers are stopped before the panel can recover an operation. Interrupted backup/restore/update work also stops WordPress and MariaDB to terminate surviving database exec processes. Only after successful fencing is a pending receipt marked interrupted; a cleanup failure keeps recovery blocked. Startup also closes owned phpMyAdmin containers, so an old browser database session must be reopened.
 
-Runtime reconciliation does not restart or delete sites. Missing Docker services are not treated as confirmed deletion. Restarts do not expose the Docker socket to the panel.
+Panel runtime reconciliation does not restart or delete sites. The separate worker quota supervisor can resume only future quota-managed sites with verified storage, persisted running intent, and a resolved operation. A blocked site requires explicit recovery. Missing Docker services are not treated as confirmed deletion. Restarts do not expose the Docker socket to the panel.
+
+## Future quota-managed sites
+
+Quota allocation is not yet exposed. When the future allocator writes a trusted record, the worker disables Docker automatic restart and owns the verified resume decision. Missing intent means stopped; malformed records, failed enforcement checks, unresolved operations and failed mutations leave owned writers stopped/blocked. Restore maintenance never resumes automatically after worker restart. A verified resource admission rejection without effects retains the existing intent. The worker checks every 30 seconds and before writer operations; this is not an instantaneous guard against a trusted root administrator changing the host.
+
+Keep internal quota records and startup intent in installation backups. Do not remove records, retag files or downgrade to a pre-gate worker to bypass a blocked state. Repair the storage and saved record using an allocator-aware version, then explicitly Start. See [the resource guide](RESOURCES.md#verified-restart-gate) for proof boundaries and pending allocation gates.
 
 ## Verification
 

@@ -119,6 +119,9 @@ func (w *worker) trackOperation(req *http.Request, operationID string) (func(err
 	return func(operationErr error, result any) error {
 		op.State, op.FinishedAt = "succeeded", time.Now().UTC()
 		var rejected *admissionError
+		if kind == "resources" && errors.As(operationErr, &rejected) && rejected.quotaSafe {
+			op.AdmissionRejected = true
+		}
 		if operationErr != nil && !errors.As(operationErr, &rejected) {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			cleanupErr := w.quiesceSite(cleanupCtx, id, kind)
@@ -181,7 +184,7 @@ func (w *worker) runtimeSnapshot(ctx context.Context, id string, recoverPending 
 	if len(ids) > 20 {
 		return snapshot, errors.New("unexpected number of site containers")
 	}
-	format := `{"name":{{json .Name}},"project":{{json (index .Config.Labels "com.docker.compose.project")}},"service":{{json (index .Config.Labels "com.docker.compose.service")}},"status":{{json .State.Status}},"memory":{{.HostConfig.Memory}},"cpus":{{.HostConfig.NanoCpus}},"security_opts":{{json .HostConfig.SecurityOpt}},"health":{{with (index .State "Health")}}{{json .Status}}{{else}}""{{end}}}`
+	format := `{"name":{{json .Name}},"project":{{json (index .Config.Labels "com.docker.compose.project")}},"service":{{json (index .Config.Labels "com.docker.compose.service")}},"status":{{json .State.Status}},"memory":{{.HostConfig.Memory}},"cpus":{{.HostConfig.NanoCpus}},"restart":{{json .HostConfig.RestartPolicy.Name}},"security_opts":{{json .HostConfig.SecurityOpt}},"health":{{with (index .State "Health")}}{{json .Status}}{{else}}""{{end}}}`
 	args := append([]string{"inspect", "--format", format}, ids...)
 	out, err = w.docker.Output(ctx, args...)
 	if err != nil {
@@ -226,6 +229,13 @@ func (w *worker) runtimeSnapshot(ctx context.Context, id string, recoverPending 
 	if (snapshot.Status == core.StatusRunning || snapshot.Status == core.StatusStopped) && (!securitypolicy.Active(wp.SecurityOpts) || !securitypolicy.Active(db.SecurityOpts)) {
 		snapshot.Status, snapshot.Detail = core.StatusUnhealthy, "Site services need the current writer security policy. Start the site to apply it with existing volumes."
 	}
+	if marked, markErr := w.quotaMarked(id); marked || markErr != nil {
+		guard, guardErr := w.loadQuotaGuard(id)
+		intent, intentErr := w.loadQuotaIntent(id)
+		if markErr != nil || guard == nil || guardErr != nil || intentErr != nil || intent.State == "blocked" || wp.Restart != "no" || db.Restart != "no" {
+			snapshot.Status, snapshot.Detail = core.StatusUnhealthy, "Quota startup is blocked. Verify storage and the saved quota record, then explicitly start the site."
+		}
+	}
 	if snapshot.Status == core.StatusRunning {
 		if _, err := os.Stat(filepath.Join(w.routes, id+".caddy")); errors.Is(err, os.ErrNotExist) {
 			snapshot.Status, snapshot.Detail = core.StatusUnhealthy, "Domain route is missing. Inspect the server route configuration."
@@ -239,6 +249,7 @@ func (w *worker) runtimeSnapshot(ctx context.Context, id string, recoverPending 
 type containerState struct {
 	Name, Project, Service, Status, Health string
 	Memory, CPUs                           int64
+	Restart                                string   `json:"restart"`
 	SecurityOpts                           []string `json:"security_opts"`
 }
 
@@ -304,6 +315,9 @@ func (w *worker) removeOwnedJobs(ctx context.Context, siteID string) error {
 }
 
 func (w *worker) quiesceSite(ctx context.Context, id, kind string) error {
+	if marked, err := w.quotaMarked(id); marked || err != nil {
+		return w.fenceQuotaSite(ctx, id, "blocked")
+	}
 	if err := w.removeOwnedJobs(ctx, id); err != nil {
 		return err
 	}

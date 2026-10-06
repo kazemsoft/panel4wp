@@ -293,8 +293,13 @@ func (w *worker) checkCapacity(ctx context.Context, id string, r core.Resources)
 	if err != nil {
 		return fmt.Errorf("unable to verify host capacity: %w", err)
 	}
-	return h.Check(r)
+	if err := h.Check(r); err != nil {
+		return &capacityRejection{err}
+	}
+	return nil
 }
+
+type capacityRejection struct{ error }
 
 func atomicConfig(path string, data []byte) error {
 	f, err := os.CreateTemp(filepath.Dir(path), ".compose-*")
@@ -326,20 +331,33 @@ func atomicConfig(path string, data []byte) error {
 	return d.Sync()
 }
 
-type admissionError struct{ error }
+type admissionError struct {
+	error
+	quotaSafe bool // Verified quota preflight and a known rejection without effects.
+}
 
 func (w *worker) changeResources(ctx context.Context, req core.ResourceRequest) (result core.Resources, operationErr error) {
+	defer func() { operationErr = w.finishQuotaWrite(ctx, req.Site.ID, operationErr) }()
 	changed := false
+	marked, markErr := w.quotaMarked(req.Site.ID)
+	verified, rejected := false, false
 	defer func() {
-		if operationErr != nil && !changed {
-			operationErr = &admissionError{operationErr}
+		if operationErr != nil && !changed && ((!marked && markErr == nil) || (verified && rejected)) {
+			operationErr = &admissionError{error: operationErr, quotaSafe: marked && verified && rejected}
 		}
 	}()
+	if err := w.quotaPreflight(ctx, req.Site.ID); err != nil {
+		return req.Resources, err
+	}
+	verified = true
+
 	r := req.Resources
 	if err := core.ValidateSite(req.Site); err != nil {
+		rejected = true
 		return r, err
 	}
 	if err := r.Validate(); err != nil {
+		rejected = true
 		return r, err
 	}
 	state, err := w.runtimeSnapshot(ctx, req.Site.ID, false)
@@ -350,6 +368,10 @@ func (w *worker) changeResources(ctx context.Context, req core.ResourceRequest) 
 		return r, errors.New("repair the site's service status before changing resources")
 	}
 	if err := w.checkCapacity(ctx, req.Site.ID, r); err != nil {
+		// A failed capacity query also has no service effects, but only an
+		// actual budget rejection is certified as safe for quota auto-resume.
+		var budget *capacityRejection
+		rejected = errors.As(err, &budget)
 		return r, err
 	}
 	path := filepath.Join(w.siteDir(req.Site.ID), "compose.yaml")

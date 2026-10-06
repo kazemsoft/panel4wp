@@ -1,0 +1,48 @@
+#!/bin/sh
+# Runs only inside the disposable guest. No host Docker socket is exposed.
+set -eu
+mount -t cgroup2 none /sys/fs/cgroup 2>/dev/null || test -f /sys/fs/cgroup/cgroup.controllers
+DOCKER_RAMDISK=true dockerd --data-root /quota/docker --exec-root /tmp/docker-exec --pidfile /tmp/dockerd.pid \
+ --storage-driver vfs --iptables=false --ip6tables=false --bridge=none --ip-forward=false --ip-masq=false \
+ --shutdown-timeout=5 --log-level=error > /tmp/dockerd.log 2>&1 &
+daemon_pid=$!
+trap 'kill -TERM "$daemon_pid" 2>/dev/null || :; wait "$daemon_pid" 2>/dev/null || :' EXIT
+ready=false
+for attempt in $(seq 1 60); do
+ if docker info >/dev/null 2>&1; then ready=true; break; fi
+ kill -0 "$daemon_pid" 2>/dev/null || { cat /tmp/dockerd.log; exit 1; }
+ sleep 1
+done
+if test "$ready" != true; then cat /tmp/dockerd.log; exit 1; fi
+case "$1" in
+ setup)
+  mkdir /quota/daemon-proof
+  tar -cf - -C / bin/busybox bin/sh lib/ld-musl-*.so.1 | docker import - guard-canary:lab >/dev/null
+  for policy in no unless-stopped; do
+   docker run -d --name "canary-$policy" --restart "$policy" --network none \
+    --mount type=bind,src=/quota/daemon-proof,dst=/proof guard-canary:lab \
+    /bin/sh -c "echo started >> /proof/$policy; while :; do /bin/busybox sleep 1; done" >/dev/null
+  done
+  for attempt in $(seq 1 30); do
+   if test -s /quota/daemon-proof/no && test -s /quota/daemon-proof/unless-stopped; then break; fi
+   sleep 1
+  done
+  test "$(wc -l < /quota/daemon-proof/no)" = 1
+  test "$(wc -l < /quota/daemon-proof/unless-stopped)" = 1
+  ;;
+ reboot)
+  # The filesystem is now mounted with noquota. The no-policy canary must
+  # stay down while the control automatically resumes, demonstrating the gate.
+  test "$(docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' canary-no)" = no
+  test "$(docker inspect -f '{{.State.Running}}' canary-no)" = false
+  for attempt in $(seq 1 30); do
+   if test "$(wc -l < /quota/daemon-proof/unless-stopped)" -ge 2; then break; fi
+   sleep 1
+  done
+  test "$(wc -l < /quota/daemon-proof/no)" = 1
+  test "$(wc -l < /quota/daemon-proof/unless-stopped)" = 2
+  test "$(docker inspect -f '{{.State.Running}}' canary-unless-stopped)" = true
+  echo DOCKER_RESTART_NO_PREVENTS_UNVERIFIED_BOOT_PASS
+  ;;
+ *) exit 1 ;;
+esac

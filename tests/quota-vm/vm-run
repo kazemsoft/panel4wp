@@ -6,7 +6,7 @@ case "$(uname -m)" in
  *) echo 'Only AMD64 and ARM64 are supported'; exit 1 ;;
 esac
 for phase in 1 2; do
- timeout 180 "$qemu" -machine "$machine" -cpu "$cpu" -m 768 -smp 2 -nographic -no-reboot -net none -kernel /boot/vmlinuz-virt -initrd /tmp/root.cpio.gz -append "console=$console rdinit=/init panic=1 loglevel=3 phase=$phase" -drive file=/tmp/quota.img,format=raw,if=virtio -drive file=/tmp/other.img,format=raw,if=virtio > "/tmp/phase-$phase.log" 2>&1 || { cat "/tmp/phase-$phase.log"; exit 1; }
+ timeout 180 "$qemu" -machine "$machine" -cpu "$cpu" -m 1024 -smp 2 -nographic -no-reboot -net none -kernel /boot/vmlinuz-virt -initrd /tmp/root.cpio.gz -append "console=$console rdinit=/init panic=1 loglevel=3 phase=$phase" -drive file=/tmp/quota.img,format=raw,if=virtio -drive file=/tmp/other.img,format=raw,if=virtio > "/tmp/phase-$phase.log" 2>&1 || { cat "/tmp/phase-$phase.log"; exit 1; }
  cat "/tmp/phase-$phase.log"
  if grep -q QUOTA_DRILL_FAIL "/tmp/phase-$phase.log"; then exit 1; fi
  grep -q QUOTA_DRILL_PHASE_PASS "/tmp/phase-$phase.log"

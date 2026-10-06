@@ -10,6 +10,8 @@ case "$(cat /proc/cmdline)" in
   mount --bind /quota/wordpress /quota-wordpress
   mount --bind /quota/database /quota-database
   storage-probe | jq -e '.reason == "supported" and .project_accounting and .project_enforcement'
+  uuid=$(cat /quota/guard-uuid)
+  storage-probe --guard "$project" 8388608 "$uuid" | jq -e '.verified and .reason == "verified"'
   test "$(cat /quota/wordpress/seed)" = "preserved seed"
   xfs_quota -x -c "quota -p -b -N $project" /quota | tee /tmp/quota-state | awk '$1 == "/dev/vda" && $4 == 8192 && $NF == "/quota" {found=1} END {exit !found}' || { cat /tmp/quota-state; exit 1; }
   if dd if=/dev/zero of=/quota/database/reboot-fill bs=1M count=9 2>/tmp/write-error; then echo 'limit lost after reboot'; exit 1; fi
@@ -20,6 +22,8 @@ case "$(cat /proc/cmdline)" in
   mount --bind /quota/wordpress /quota-wordpress
   mount --bind /quota/database /quota-database
   storage-probe | jq -e '.wordpress_filesystem == "xfs" and .reason != "supported" and (.project_enforcement | not)'
+  storage-probe --guard "$project" 8388608 "$uuid" | jq -e '(.verified | not) and .reason == "enforcement-disabled"'
+  sh /lab/daemon-check reboot
   echo REBOOT_LIMIT_AND_DISABLED_ENFORCEMENT_CHECK_PASS
   exit 0
  ;;
@@ -37,6 +41,17 @@ umount /quota-database
 mount --bind /quota/database /quota-database
 xfs_quota -x -c "project -s -p /quota/wordpress -p /quota/database $project" /quota
 xfs_quota -x -c "limit -p bhard=8m $project" /quota
+uuid=$(storage-probe --identity)
+printf '%s' "$uuid" > /quota/guard-uuid
+storage-probe --guard "$project" 8388608 "$uuid" | jq -e '.verified and .reason == "verified"'
+storage-probe --guard "$project" 8388608 00000000000000000000000000000000 | jq -e '(.verified | not) and .reason == "filesystem-identity"'
+storage-probe --guard 3456790 8388608 "$uuid" | jq -e '(.verified | not) and .reason == "project-attributes"'
+storage-probe --guard "$project" 16777216 "$uuid" | jq -e '(.verified | not) and .reason == "hard-limit"'
+xfs_io -c 'chattr -P' /quota/wordpress
+storage-probe --guard "$project" 8388608 "$uuid" | jq -e '(.verified | not) and .reason == "project-attributes"'
+xfs_io -c 'chattr +P' /quota/wordpress
+storage-probe --guard "$project" 8388608 "$uuid" | jq -e '.verified'
+echo NATIVE_GUARD_UUID_PROJECT_LIMIT_AND_INHERITANCE_PASS
 test "$seed_before" = "$(sha256sum /quota/wordpress/seed | cut -d ' ' -f 1)"
 dd if=/dev/zero of=/quota/wordpress/file bs=1M count=5 2>/dev/null
 if dd if=/dev/zero of=/quota/database/file bs=1M count=5 2>/tmp/write-error; then echo 'aggregate quota not enforced'; exit 1; fi
@@ -68,4 +83,5 @@ grep -Eq 'No space left|Disk quota exceeded' /tmp/restore-error
 cmp /tmp/safety-seed /quota/wordpress/seed
 rm -f /quota/wordpress/oversize
 echo OVERSIZE_EXTRACTION_FAILURE_PASS
+sh /lab/daemon-check setup
 sync
