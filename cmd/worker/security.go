@@ -30,6 +30,10 @@ func (w *worker) writeWriterProfile(id string) (string, error) {
 	return path, atomicConfig(path, want)
 }
 
+func (w *worker) writerOptionLine(id string) string {
+	return "    security_opt: [no-new-privileges:true, " + strconv.Quote("seccomp="+filepath.Join(w.siteDir(id), securitypolicy.Filename)) + "]\n"
+}
+
 // The panel owns this controlled Compose shape. Never overwrite a different
 // administrator-provided security configuration or discard extra options.
 func (w *worker) writerCompose(id string, data []byte) ([]byte, error) {
@@ -37,7 +41,7 @@ func (w *worker) writerCompose(id string, data []byte) ([]byte, error) {
 		return nil, errors.New("invalid site ID")
 	}
 	legacy := "    security_opt: [no-new-privileges:true]\n"
-	guard := "    security_opt: [no-new-privileges:true, " + strconv.Quote("seccomp="+filepath.Join(w.siteDir(id), securitypolicy.Filename)) + "]\n"
+	guard := w.writerOptionLine(id)
 	text := string(data)
 	writers := 3 // WordPress, MariaDB and CLI; old sites may lack phpMyAdmin.
 	if strings.Count(text, "  phpmyadmin:\n") == 1 {

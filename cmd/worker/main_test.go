@@ -116,10 +116,16 @@ func TestDatabaseManagerLifecycleAndLegacyComposeUpgrade(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(w.siteDir(id), "compose.yaml"), []byte(legacy), 0600); err != nil {
 		t.Fatal(err)
 	}
+	if err := w.ensureWriterPolicy(id); err != nil {
+		t.Fatal(err)
+	}
 	if err := w.databaseAction(context.Background(), id, "start"); err != nil {
 		t.Fatal(err)
 	}
 	updated, _ := os.ReadFile(filepath.Join(w.siteDir(id), "compose.yaml"))
+	if strings.Count(string(updated), "seccomp=") != 4 || strings.Count(string(updated), "\n  tools_proxy:\n") != 1 {
+		t.Fatal("legacy tool lost writer protection or duplicated its network")
+	}
 	if !strings.Contains(string(updated), "wph-pma-"+id) || !strings.Contains(string(updated), "https://panel.example.com/sites/"+id+"/database/") {
 		t.Fatalf("database tool was not added safely: %s", updated)
 	}

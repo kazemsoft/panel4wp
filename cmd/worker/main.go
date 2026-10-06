@@ -262,9 +262,16 @@ func (w *worker) ensureDatabaseTool(id string) error {
 		return errors.New("site compose cannot be upgraded with database manager")
 	}
 	tool := fmt.Sprintf(databaseToolTemplate, id, strconv.Quote(w.databaseURL(id)))
+	// When startup already migrated the older services, add the tool with the
+	// same policy rather than creating an unsupported mixed configuration.
+	if strings.Contains(content, w.writerOptionLine(id)) {
+		tool = strings.Replace(tool, "    security_opt: [no-new-privileges:true]\n", w.writerOptionLine(id), 1)
+	}
 	content = strings.Replace(content, "  cli:\n", tool+"  cli:\n", 1)
-	content = strings.Replace(content, "  database:\n    internal: true\n", "  database:\n    internal: true\n  tools_proxy:\n    external: true\n    name: wphost-tools-proxy\n", 1)
-	return os.WriteFile(composePath, []byte(content), 0600)
+	if !strings.Contains(content, "\n  tools_proxy:\n") {
+		content = strings.Replace(content, "  database:\n    internal: true\n", "  database:\n    internal: true\n  tools_proxy:\n    external: true\n    name: wphost-tools-proxy\n", 1)
+	}
+	return atomicConfig(composePath, []byte(content))
 }
 
 func (w *worker) scheduleDatabaseStop(id string) {
