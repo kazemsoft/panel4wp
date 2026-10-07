@@ -21,7 +21,8 @@ static bool add_project(struct project_set *set, uint32_t id) {
     set->slots[slot] = id; set->count++; return true;
 }
 
-static const char *census(int fd, struct project_set *set, uint64_t *scanned) {
+typedef const char *(*inode_check)(const struct xfs_bulkstat *, void *);
+static const char *checked_census(int fd, struct project_set *set, uint64_t *scanned, inode_check check, void *context) {
     struct xfs_bulkstat_req *req = calloc(1, XFS_BULKSTAT_REQ_SIZE(64));
     if (!req) return "memory";
     const char *reason = NULL;
@@ -40,6 +41,7 @@ static const char *census(int fd, struct project_set *set, uint64_t *scanned) {
                 stat->bs_ino < previous || stat->bs_ino >= req->hdr.ino) { reason = "inode-response"; break; }
             previous = stat->bs_ino + 1;
             if (++*scanned > INVENTORY_MAX_INODES || !add_project(set, stat->bs_projectid)) { reason = "scan-limit"; break; }
+            if (check && (reason = check(stat, context))) break;
         }
         if (reason) break;
         cursor = req->hdr.ino;
@@ -61,6 +63,10 @@ static const char *census(int fd, struct project_set *set, uint64_t *scanned) {
         next = quota.d_id + 1;
     }
     return "scan-limit";
+}
+
+static inline const char *census(int fd, struct project_set *set, uint64_t *scanned) {
+    return checked_census(fd, set, scanned, NULL, NULL);
 }
 
 static const char *audit_tree(int fd, dev_t device, ino_t other_root, unsigned depth, uint64_t *count) {

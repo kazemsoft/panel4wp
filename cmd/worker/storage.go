@@ -73,6 +73,14 @@ func (w *worker) runStorageHelper(ctx context.Context, id, entry string, mounts 
 	if !core.ValidID(id) {
 		return nil, errors.New("invalid site ID")
 	}
+	if entry != "storage-probe" && entry != "storage-authority" {
+		return nil, errors.New("unknown native storage helper")
+	}
+	tagging := entry == "storage-authority" && len(arguments) > 0 && arguments[0] == "--tag"
+	volumeMode := ",readonly"
+	if tagging {
+		volumeMode = ""
+	}
 	volumes := []string{"wph-" + id + "_wordpress_data", "wph-" + id + "_database_data"}
 	format := `{"name":{{json .Name}},"driver":{{json .Driver}},"project":{{json (index .Labels "com.docker.compose.project")}},"volume":{{json (index .Labels "com.docker.compose.volume")}},"options":{{if .Options}}true{{else}}false{{end}}}`
 	out, err := w.docker.Output(ctx, append([]string{"volume", "inspect", "--format", format}, volumes...)...)
@@ -103,7 +111,10 @@ func (w *worker) runStorageHelper(ctx context.Context, id, entry string, mounts 
 	if err != nil {
 		return nil, err
 	}
-	args := []string{"run", "--rm", "--pull", "never", "--network", "none", "--read-only", "--cap-drop", "ALL", "--cap-add", "SYS_ADMIN", "--cap-add", "DAC_READ_SEARCH", "--security-opt", "no-new-privileges:true", "--pids-limit", "16", "--memory", "32m", "--cpus", "0.25", "--entrypoint", "/usr/local/bin/" + entry, "--mount", "type=volume,src=" + volumes[0] + ",dst=/quota-wordpress,readonly", "--mount", "type=volume,src=" + volumes[1] + ",dst=/quota-database,readonly"}
+	args := []string{"run", "--rm", "--pull", "never", "--network", "none", "--read-only", "--cap-drop", "ALL", "--cap-add", "SYS_ADMIN", "--cap-add", "DAC_READ_SEARCH", "--security-opt", "no-new-privileges:true", "--pids-limit", "16", "--memory", "32m", "--cpus", "0.25", "--entrypoint", "/usr/local/bin/" + entry, "--mount", "type=volume,src=" + volumes[0] + ",dst=/quota-wordpress" + volumeMode, "--mount", "type=volume,src=" + volumes[1] + ",dst=/quota-database" + volumeMode}
+	if tagging {
+		args = append(args, "--cap-add", "FOWNER", "--ulimit", "nofile=16384:16384", "--name", "wph-job-"+id, "--label", "panel4wp.role=job", "--label", "panel4wp.site="+id)
+	}
 	for _, mount := range mounts {
 		args = append(args, "--mount", mount)
 	}

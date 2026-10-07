@@ -43,7 +43,7 @@ func quotaHash(value string) string {
 
 func validQuotaAuthority(a quotaAuthority) bool {
 	return a.Version == 1 && quotaUUID.MatchString(a.Owner) && quotaUUID.MatchString(a.UUID) &&
-		quotaDigest.MatchString(a.Daemon) && quotaDigest.MatchString(a.State) && (a.Phase == "pending" || a.Phase == "prepared")
+		quotaDigest.MatchString(a.Daemon) && quotaDigest.MatchString(a.State) && (a.Phase == "pending" || a.Phase == "prepared" || a.Phase == "tagging" || a.Phase == "tagged")
 }
 
 func (w *worker) readQuotaPlan(id string) (*quotaTagPlan, error) {
@@ -81,15 +81,33 @@ func (w *worker) quotaDaemon(ctx context.Context) (string, error) {
 
 // Consistent lock order: execution -> local ledger -> native filesystem lock.
 // The native helper cannot access the local ledger or acquire locks in reverse.
-// Internal preparation only: no API/UI caller, tagging, limits or ready marker.
-func (w *worker) prepareQuotaTagging(ctx context.Context, id string) (err error) {
-	if !core.ValidID(id) || !filepath.IsAbs(w.quotaRoot) || filepath.Clean(w.quotaRoot) != w.quotaRoot || w.quotaRoot == "/" || strings.ContainsAny(w.quotaRoot, ",\r\n\x00") {
-		return errors.New("quota preparation requires an explicit dedicated filesystem root")
+// Internal transition only: no API/UI caller, quota limits or ready marker.
+func (w *worker) prepareQuotaTagging(ctx context.Context, id string) error {
+	return w.quotaDataTransition(ctx, id, false)
+}
+
+// Internal fenced tagging/retry only. The quota guard stays pending afterward.
+func (w *worker) tagQuotaData(ctx context.Context, id string) error {
+	return w.quotaDataTransition(ctx, id, true)
+}
+
+func (w *worker) quotaDataTransition(ctx context.Context, id string, tagging bool) (err error) {
+	if !core.ValidID(id) {
+		return errors.New("invalid quota site")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	w.executionMu.Lock()
 	defer w.executionMu.Unlock()
+	// A failed preparation remains fenced even if storage/env is later absent.
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, w.fenceQuotaSite(ctx, id, "blocked"))
+		}
+	}()
+	if !filepath.IsAbs(w.quotaRoot) || filepath.Clean(w.quotaRoot) != w.quotaRoot || w.quotaRoot == "/" || strings.ContainsAny(w.quotaRoot, ",\r\n\x00") {
+		return errors.New("quota transition requires an explicit dedicated filesystem root")
+	}
 	daemon, err := w.quotaDaemon(ctx)
 	if err != nil {
 		return err
@@ -99,12 +117,12 @@ func (w *worker) prepareQuotaTagging(ctx context.Context, id string) (err error)
 	if err != nil {
 		return err
 	}
-	// A failed preparation remains fenced even if storage/env is later absent.
-	defer func() {
-		if err != nil {
-			err = errors.Join(err, w.fenceQuotaSite(ctx, id, "blocked"))
-		}
-	}()
+	if tagging && (plan == nil || plan.Phase == "pending") {
+		return errors.New("quota tagging requires a prepared journal")
+	}
+	if !tagging && plan != nil && (plan.Phase == "tagging" || plan.Phase == "tagged") {
+		return errors.New("quota tagging recovery requires the tagging transition")
+	}
 	var reservation quotaReservation
 	if plan == nil {
 		reservation, err = w.reserveQuotaProject(ctx, id)
@@ -153,7 +171,7 @@ func (w *worker) prepareQuotaTagging(ctx context.Context, id string) (err error)
 		if err = strictQuotaJSON(data, &authority); err != nil {
 			return err
 		}
-		if !validQuotaAuthority(authority) || authority.Daemon != daemon || authority.State != state || authority.UUID != reservation.FilesystemUUID {
+		if !validQuotaAuthority(authority) || (authority.Phase != "pending" && authority.Phase != "prepared") || authority.Daemon != daemon || authority.State != state || authority.UUID != reservation.FilesystemUUID {
 			return errors.New("quota authority belongs to another installation or daemon")
 		}
 	}
@@ -204,8 +222,28 @@ func (w *worker) prepareQuotaTagging(ctx context.Context, id string) (err error)
 	if plan.Phase == "prepared" {
 		mode = "existing"
 	}
+	action, expected := "--prepare", "prepared"
+	if tagging {
+		data, readErr := readQuotaMetadata(filepath.Join(w.siteDir(id), "quota.json"))
+		if readErr != nil {
+			return errors.New("pending quota guard missing; recover complete metadata")
+		}
+		var guard quotaGuard
+		if err = strictQuotaJSON(data, &guard); err != nil {
+			return err
+		}
+		if guard.Version != 1 || guard.Phase != "pending" || guard.HardBytes != 0 || guard.ProjectID != plan.ProjectID || guard.FilesystemUUID != plan.UUID {
+			return errors.New("quota tagging requires the matching pending launch fence")
+		}
+		plan.Phase = "tagging"
+		body, _ := json.Marshal(plan)
+		if err = atomicConfig(filepath.Join(w.siteDir(id), "quota-plan.json"), body); err != nil {
+			return err
+		}
+		action, expected, mode = "--tag", "tagged", "existing"
+	}
 	out, err := w.runStorageHelper(ctx, id, "storage-authority", []string{"type=bind,src=" + w.quotaRoot + ",dst=/quota-filesystem"},
-		"--prepare", authority.Owner, daemon, state, reservation.FilesystemUUID, id, strconv.FormatUint(uint64(reservation.ProjectID), 10), mode)
+		action, authority.Owner, daemon, state, reservation.FilesystemUUID, id, strconv.FormatUint(uint64(reservation.ProjectID), 10), mode)
 	if err != nil {
 		return err
 	}
@@ -216,7 +254,7 @@ func (w *worker) prepareQuotaTagging(ctx context.Context, id string) (err error)
 	if err = strictQuotaJSON(out, &result); err != nil {
 		return err
 	}
-	if !result.Verified || result.Reason != "prepared" {
+	if !result.Verified || result.Reason != expected {
 		return fmt.Errorf("quota ownership/journal preparation refused: %s", result.Reason)
 	}
 	authority.Phase = "prepared"
@@ -224,7 +262,7 @@ func (w *worker) prepareQuotaTagging(ctx context.Context, id string) (err error)
 	if err = atomicConfig(path, body); err != nil {
 		return err
 	}
-	plan.Phase = "prepared"
+	plan.Phase = expected
 	body, _ = json.Marshal(plan)
 	return atomicConfig(filepath.Join(w.siteDir(id), "quota-plan.json"), body)
 }

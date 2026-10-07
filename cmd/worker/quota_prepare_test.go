@@ -11,13 +11,19 @@ import (
 
 type preparationDocker struct {
 	quotaDocker
-	reject  bool
-	foreign bool
-	helpers int
+	reject    bool
+	foreign   bool
+	helpers   int
+	tags      int
+	orphan    bool
+	cancelTag bool
 }
 
 func (f *preparationDocker) Output(ctx context.Context, args ...string) ([]byte, error) {
 	joined := strings.Join(args, " ")
+	if args[0] == "ps" && strings.Contains(joined, "label=panel4wp.role=job") && f.orphan {
+		return []byte(`{"name":"wph-job-` + quotaTestID + `","site":"` + quotaTestID + `","role":"job"}`), nil
+	}
 	if args[0] == "info" {
 		return []byte("fixture-daemon-identity"), nil
 	}
@@ -35,12 +41,30 @@ func (f *preparationDocker) Output(ctx context.Context, args ...string) ([]byte,
 		if f.reject {
 			return []byte(`{"verified":false,"reason":"authority-owner"}`), nil
 		}
+		if strings.Contains(joined, " --tag ") {
+			if strings.Contains(joined, "dst=/quota-wordpress,readonly") || !strings.Contains(joined, "--cap-add FOWNER") || !strings.Contains(joined, "--name wph-job-"+quotaTestID) || !strings.Contains(joined, "--label panel4wp.role=job") {
+				panic("incorrect mutating helper access/ownership")
+			}
+			f.tags++
+			if f.cancelTag {
+				f.orphan = true
+				return nil, context.Canceled
+			}
+			return []byte(`{"verified":true,"reason":"tagged"}`), nil
+		}
 		return []byte(`{"verified":true,"reason":"prepared"}`), nil
 	}
 	if args[0] == "run" && args[len(args)-1] == "--inventory" {
 		return []byte(`{"verified":true,"reason":"verified","filesystem_uuid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","scanned_inodes":20,"wordpress_inodes":2,"database_inodes":1,"project_ids":[]}`), nil
 	}
 	return f.quotaDocker.Output(ctx, args...)
+}
+
+func (f *preparationDocker) Run(ctx context.Context, args ...string) error {
+	if args[0] == "rm" && args[len(args)-1] == "wph-job-"+quotaTestID {
+		f.orphan = false
+	}
+	return f.quotaDocker.Run(ctx, args...)
 }
 func preparationWorker(t *testing.T) (*worker, *preparationDocker) {
 	t.Helper()
@@ -144,5 +168,77 @@ func TestQuotaPreparationFirstMarkerFailureFencesWriters(t *testing.T) {
 	}
 	if !f.stopped || f.restart != "no" || f.helpers != 0 {
 		t.Fatal("marker failure did not stop writers before helper", f)
+	}
+}
+
+func TestQuotaTaggingPersistsPendingFenceAndRetryState(t *testing.T) {
+	w, f := preparationWorker(t)
+	if err := w.prepareQuotaTagging(context.Background(), quotaTestID); err != nil {
+		t.Fatal(err)
+	}
+	f.cancelTag = true
+	if err := w.tagQuotaData(context.Background(), quotaTestID); err == nil {
+		t.Fatal("cancelled tagging accepted")
+	}
+	plan, err := w.readQuotaPlan(quotaTestID)
+	if err != nil || plan.Phase != "tagging" || f.orphan || !f.stopped {
+		t.Fatal("failed tagging not fenced", plan, err, f)
+	}
+	f.cancelTag = false
+	if err := w.tagQuotaData(context.Background(), quotaTestID); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.tagQuotaData(context.Background(), quotaTestID); err != nil {
+		t.Fatal("tag retry", err)
+	}
+	plan, err = w.readQuotaPlan(quotaTestID)
+	if err != nil || plan.Phase != "tagged" || f.tags != 3 {
+		t.Fatal(plan, err, f)
+	}
+	if guard, err := w.loadQuotaGuard(quotaTestID); err == nil || guard != nil {
+		t.Fatal("tagging enabled quota", guard, err)
+	}
+	if err := w.reconcileQuotaSites(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	if hasQuotaStart(&f.quotaDocker) {
+		t.Fatal("tagged site resumed")
+	}
+}
+
+func TestQuotaTaggingRejectsMissingPreparationAndAlteredGuard(t *testing.T) {
+	for _, failure := range []string{"no-plan", "guard-missing", "guard-limit", "malformed-plan", "root-missing", "native-reject"} {
+		t.Run(failure, func(t *testing.T) {
+			w, f := preparationWorker(t)
+			if failure != "no-plan" {
+				if err := w.prepareQuotaTagging(context.Background(), quotaTestID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			switch failure {
+			case "guard-missing":
+				os.Remove(filepath.Join(w.siteDir(quotaTestID), "quota.json"))
+			case "guard-limit":
+				data, _ := os.ReadFile(filepath.Join(w.siteDir(quotaTestID), "quota.json"))
+				var guard quotaGuard
+				json.Unmarshal(data, &guard)
+				guard.HardBytes = 512
+				data, _ = json.Marshal(guard)
+				os.WriteFile(filepath.Join(w.siteDir(quotaTestID), "quota.json"), data, 0600)
+			case "malformed-plan":
+				os.WriteFile(filepath.Join(w.siteDir(quotaTestID), "quota-plan.json"), []byte(`null`), 0600)
+			case "root-missing":
+				w.quotaRoot = ""
+			case "native-reject":
+				f.reject = true
+			}
+			f.orphan = true
+			if err := w.tagQuotaData(context.Background(), quotaTestID); err == nil {
+				t.Fatal("unsafe tagging accepted")
+			}
+			if f.orphan || !f.stopped || hasQuotaStart(&f.quotaDocker) {
+				t.Fatal("rejected tagging left writers active", f)
+			}
+		})
 	}
 }

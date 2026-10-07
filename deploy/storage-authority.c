@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: MIT
- * Durable ownership and pre-mutation inode journal. Never changes data attrs.
+ * Durable ownership, immutable inode journal and fenced native tagging.
  */
 #include "storage-common.h"
 #include "storage-inventory.h"
@@ -127,7 +127,9 @@ static bool valid_header(const struct plan_header *h) {
         (uint64_t)h->count == (uint64_t)h->wordpress + h->database;
 }
 
-static const char *prepare(int root, int wp, int db, char **args) {
+#include "storage-tagging.h"
+
+static const char *prepare(int root, int wp, int db, char **args, bool tagging) {
     struct stat r, a, b;
     char uuid[33], wu[33], du[33];
     struct fsxattr root_attr = {0};
@@ -135,7 +137,7 @@ static const char *prepare(int root, int wp, int db, char **args) {
     bool initial = !strcmp(args[7], "claim");
     if (!hex_string(args[1], 32) || !hex_string(args[2], 64) || !hex_string(args[3], 64) ||
         !hex_string(args[4], 32) || !hex_string(args[5], 16) || !unsigned_number(args[6], &project) ||
-        !project || project > UINT32_MAX || (!initial && strcmp(args[7], "existing"))) return "arguments";
+        !project || project > UINT32_MAX || (!initial && strcmp(args[7], "existing")) || (tagging && initial)) return "arguments";
     if (!actual_root(root) || fstat(root, &r) || fstat(wp, &a) || fstat(db, &b) ||
         !fs_identity(root, uuid) || !fs_identity(wp, wu) || !fs_identity(db, du) ||
         strcmp(uuid, args[4]) || strcmp(uuid, wu) || strcmp(uuid, du) || r.st_dev != a.st_dev || r.st_dev != b.st_dev ||
@@ -198,6 +200,7 @@ static const char *prepare(int root, int wp, int db, char **args) {
             reservations[i].reserved[0] || reservations[i].reserved[1] || reservations[i].reserved[2]) { reason = "authority-reservations"; goto done; }
         for (unsigned j = 0; j < i; j++) if (reservations[i].project == reservations[j].project || !strcmp(reservations[i].site, reservations[j].site)) { reason = "authority-reservations"; goto done; }
     }
+    if (tagging) { reason = tag_data(root, wp, db, plans, reservations, reservation_count, args); goto done; }
     struct project_set set = {.slots = calloc(INVENTORY_HASH_SLOTS, sizeof(uint32_t))};
     uint64_t scanned = 0, wp_count = 0, db_count = 0;
     if (!set.slots) { reason = "memory"; goto done; }
@@ -288,12 +291,13 @@ done:
 }
 
 int main(int argc, char **argv) {
-    if (argc != 9 || strcmp(argv[1], "--prepare")) return 1;
+    if (argc != 9 || (strcmp(argv[1], "--prepare") && strcmp(argv[1], "--tag"))) return 1;
+    bool tagging = !strcmp(argv[1], "--tag");
     int root = open("/quota-filesystem", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     int wp = open("/quota-wordpress", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     int db = open("/quota-database", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (root < 0 || wp < 0 || db < 0) return 1;
-    const char *reason = prepare(root, wp, db, argv + 1);
-    printf("{\"verified\":%s,\"reason\":\"%s\"}\n", reason ? "false" : "true", reason ? reason : "prepared");
+    const char *reason = prepare(root, wp, db, argv + 1, tagging);
+    printf("{\"verified\":%s,\"reason\":\"%s\"}\n", reason ? "false" : "true", reason ? reason : (tagging ? "tagged" : "prepared"));
     close(root); close(wp); close(db); return 0;
 }

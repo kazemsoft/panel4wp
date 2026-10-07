@@ -110,7 +110,8 @@ if test "$1" = setup; then
 else
  plan storage-authority 1000000 existing | jq -e '.verified'
  test "$(cat /other/authority-wp/seed)" = 'authority seed preserved'
- storage-probe --inventory | jq -e '.verified and .project_ids == []'
+ # The separate tagging fixture now legitimately owns another project here.
+ storage-probe --inventory | jq -e '.verified and (.project_ids | index(1000000) == null)'
  echo FILESYSTEM_AUTHORITY_PREPARATION_REBOOT_PASS
 fi
 umount /quota-filesystem /quota-wordpress /quota-database

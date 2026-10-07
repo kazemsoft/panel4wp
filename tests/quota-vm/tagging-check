@@ -1,0 +1,139 @@
+#!/bin/sh
+# Only inside the disposable XFS guest. Attribute resets below are lab fixtures.
+set -eu
+owner=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+daemon=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+state=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+site=2222222222222222
+project=1000010
+umount /quota-wordpress /quota-database
+mkdir -p /quota-filesystem /other/tag-wp /other/tag-db
+mount --bind /other/tag-wp /quota-wordpress
+mount --bind /other/tag-db /quota-database
+mount --bind /other /quota-filesystem
+uuid=$(storage-probe --identity)
+prepare() { storage-authority --prepare "$owner" "$daemon" "$state" "$uuid" "$site" "$project" claim; }
+tag() { "$1" --tag "$owner" "$daemon" "$state" "$uuid" "$site" "$project" existing; }
+reject() { tag storage-authority | tee /tmp/tag-refusal | jq -e '(.verified | not)' || { cat /tmp/tag-refusal; exit 1; }; }
+reset_tags() {
+ for path in /other/tag-wp /other/tag-wp/nested /other/tag-wp/nested/seed /other/tag-db /other/tag-db/data; do xfs_io -c 'chproj 0' "$path"; done
+ for path in /other/tag-wp /other/tag-wp/nested /other/tag-db; do xfs_io -c 'chattr -P' "$path"; done
+}
+if test "$1" = setup; then
+ mkdir /other/tag-wp/nested
+ printf 'native tag seed preserved' > /other/tag-wp/nested/seed
+ dd if=/dev/zero of=/other/tag-db/data bs=4096 count=3 2>/dev/null
+ chown 33:33 /other/tag-wp/nested/seed
+ chown 999:999 /other/tag-db/data
+ chmod 640 /other/tag-wp/nested/seed
+ prepare | jq -e '.verified'
+ journal=/other/.panel4wp-quota-plans/$site
+ cp "$journal" /tmp/tag-journal
+ hash=$(sha256sum "$journal" | cut -d ' ' -f1)
+ data_hash=$(sha256sum /other/tag-db/data | cut -d ' ' -f1)
+ # Reject changed membership, links, mode, project and generation before writes.
+ touch /other/tag-wp/new
+ reject
+ rm /other/tag-wp/new
+ ln /other/tag-wp/nested/seed /other/shared-tag-link
+ reject
+ rm /other/shared-tag-link
+ ln -s /other/authority-wp/seed /other/tag-wp/link
+ reject
+ rm /other/tag-wp/link
+ chmod 600 /other/tag-wp/nested/seed
+ reject
+ chmod 640 /other/tag-wp/nested/seed
+ mv /other/tag-db/data /other/moved-data
+ touch /other/tag-db/data
+ reject
+ rm /other/tag-db/data
+ mv /other/moved-data /other/tag-db/data
+ printf '\357\276\255\336' | dd of="$journal" bs=1 seek=272 conv=notrunc 2>/dev/null
+ reject
+ cp /tmp/tag-journal "$journal"
+ xfs_io -c 'chproj 4000010' /other/tag-db/data
+ reject
+ xfs_io -c 'chproj 0' /other/tag-db/data
+ touch /other/same-project-outside
+ xfs_io -c "chproj $project" /other/same-project-outside
+ reject
+ xfs_io -c 'chproj 0' /other/same-project-outside
+ rm /other/same-project-outside
+ # A deleted inode held open outside the trees must not be silently skipped.
+ touch /other/unlinked-project
+ xfs_io -c "chproj $project" /other/unlinked-project
+ exec 3<>/other/unlinked-project
+ rm /other/unlinked-project
+ reject
+ exec 3>&-
+ sync
+ xfs_quota -x -c "limit -p bhard=1m $project" /other
+ reject
+ xfs_quota -x -c "limit -p bhard=0 $project" /other
+ xfs_quota -x -c 'limit -p -d bhard=1m' /other
+ reject
+ xfs_quota -x -c 'limit -p -d bhard=0' /other
+ mv "$journal" /tmp/tag-lost-journal
+ reject
+ mv /tmp/tag-lost-journal "$journal"
+ # A second journal pointing at these inodes must prevent tagging either site.
+ index_size=$(stat -c %s /other/.panel4wp-quota-burned)
+ site=3333333333333333
+ project=1000011
+ prepare | jq -e '.verified'
+ reject
+ site=2222222222222222
+ project=1000010
+ reject
+ rm /other/.panel4wp-quota-plans/3333333333333333
+ truncate -s "$index_size" /other/.panel4wp-quota-burned
+ for point in tag-before tag-write tag-one tag-half tag-verified; do
+  if PANEL4WP_AUTHORITY_CRASH=$point tag storage-authority-crash > /tmp/tag-crash 2>&1; then echo 'tag checkpoint did not kill helper'; exit 1; fi
+  test "$hash" = "$(sha256sum "$journal" | cut -d ' ' -f1)"
+  tag storage-authority | tee /tmp/tag-result | jq -e '.verified and .reason == "tagged"' || { cat /tmp/tag-result; exit 1; }
+  tag storage-authority | jq -e '.verified'
+  test "$(cat /other/tag-wp/nested/seed)" = 'native tag seed preserved'
+  test "$data_hash" = "$(sha256sum /other/tag-db/data | cut -d ' ' -f1)"
+  test "$(stat -c '%u:%g:%a' /other/tag-wp/nested/seed)" = '33:33:640'
+  test "$(stat -c '%u:%g:%a' /other/tag-db/data)" = '999:999:644'
+  test "$hash" = "$(sha256sum "$journal" | cut -d ' ' -f1)"
+  # Reset only this disposable fixture to its original attrs for the next kill.
+  reset_tags
+ done
+ # Originally privileged mode is journaled by preparation but never mutated.
+ umount /quota-wordpress /quota-database
+ mkdir /other/special-wp /other/special-db
+ touch /other/special-wp/special
+ chmod 4755 /other/special-wp/special
+ mount --bind /other/special-wp /quota-wordpress
+ mount --bind /other/special-db /quota-database
+ site=4444444444444444
+ project=1000012
+ prepare | jq -e '.verified'
+ tag storage-authority | jq -e '(.verified | not) and .reason == "unsupported-attributes"'
+ test "$(stat -c %a /other/special-wp/special)" = 4755
+ xfs_io -c stat /other/special-wp/special | grep -q 'projid = 0'
+ umount /quota-wordpress /quota-database
+ mount --bind /other/tag-wp /quota-wordpress
+ mount --bind /other/tag-db /quota-database
+ site=2222222222222222
+ project=1000010
+ tag storage-authority | jq -e '.verified'
+ echo NATIVE_TAGGING_PARTIAL_RETRY_AND_DATA_PRESERVATION_PASS
+ printf '%s' "$hash" > /other/tag-journal-hash
+ printf '%s' "$data_hash" > /other/tag-data-hash
+ reset_tags
+ if PANEL4WP_AUTHORITY_CRASH=tag-half tag storage-authority-crash >/tmp/reboot-tag-crash 2>&1; then echo 'reboot checkpoint did not kill helper'; exit 1; fi
+ echo NATIVE_PARTIAL_TAGGING_LEFT_FOR_GUEST_REBOOT
+else
+ tag storage-authority | tee /tmp/tag-reboot | jq -e '.verified and .reason == "tagged"' || { cat /tmp/tag-reboot; exit 1; }
+ test "$(cat /other/tag-wp/nested/seed)" = 'native tag seed preserved'
+ test "$(stat -c '%u:%g:%a' /other/tag-wp/nested/seed)" = '33:33:640'
+ test "$(cat /other/tag-journal-hash)" = "$(sha256sum /other/.panel4wp-quota-plans/$site | cut -d ' ' -f1)"
+ test "$(cat /other/tag-data-hash)" = "$(sha256sum /other/tag-db/data | cut -d ' ' -f1)"
+ echo NATIVE_TAGGED_TREE_AND_JOURNAL_REBOOT_PASS
+fi
+umount /quota-filesystem /quota-wordpress /quota-database
+mount --bind /quota/wordpress /quota-wordpress
+mount --bind /quota/database /quota-database

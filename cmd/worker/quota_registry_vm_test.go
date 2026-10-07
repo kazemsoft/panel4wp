@@ -85,6 +85,29 @@ func TestQuotaRegistryNativeVM(t *testing.T) {
 			t.Fatal("preparation authorized starts", guard, err)
 		}
 		t.Log("NATIVE_WORKER_PREPARATION_AND_WRITER_FENCING_PASS")
+		if err := w.tagQuotaData(ctx, first); err != nil {
+			t.Fatal("native tagging", err)
+		}
+		if err := w.tagQuotaData(ctx, first); err != nil {
+			t.Fatal("native tagging retry", err)
+		}
+		plan, err = w.readQuotaPlan(first)
+		if err != nil || plan == nil || plan.Phase != "tagged" {
+			t.Fatal(plan, err)
+		}
+		if guard, err := w.loadQuotaGuard(first); err == nil || guard != nil {
+			t.Fatal("tagging authorized writers", guard, err)
+		}
+		if err := docker.Run(ctx, "run", "-d", "--name", "wph-job-"+first, "--network", "none", "--label", "panel4wp.role=job", "--label", "panel4wp.site="+first, "--volume", "wph-"+first+"_wordpress_data:/data:ro", "guard-canary:lab", "/bin/sh", "-c", "while :; do /bin/busybox sleep 1; done"); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.reconcileQuotaSites(ctx, true); err != nil {
+			t.Fatal("orphan cleanup", err)
+		}
+		if _, err := docker.Output(ctx, "inspect", "wph-job-"+first); err == nil {
+			t.Fatal("orphan native job survived reconciliation")
+		}
+		t.Log("NATIVE_WORKER_TAGGING_RETRY_AND_ORPHAN_CLEANUP_PASS")
 	} else if phase == "reboot" {
 		path := filepath.Join(w.root, ".quota", "projects.json")
 		before, err := os.ReadFile(path)
@@ -117,6 +140,9 @@ func TestQuotaRegistryNativeVM(t *testing.T) {
 		planAfter, err := os.ReadFile(planPath)
 		if err != nil || string(planBefore) != string(planAfter) {
 			t.Fatal("failed preparation rewrote journal", err)
+		}
+		if err := w.tagQuotaData(ctx, first); err == nil {
+			t.Fatal("unenforced tagged-tree recovery accepted")
 		}
 		w.quotaRoot = "" // Startup fencing must not depend on the authority binding.
 		if err := w.reconcileQuotaSites(ctx, true); err != nil {
