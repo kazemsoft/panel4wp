@@ -1,0 +1,118 @@
+#!/bin/sh
+# Dedicated disposable second filesystem; never used against host storage.
+set -eu
+owner=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+daemon=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+state=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+site=aaaaaaaaaaaaaaaa
+mkdir -p /quota-filesystem
+umount /quota-wordpress /quota-database
+mkdir -p /other/authority-wp /other/authority-db
+mount --bind /other/authority-wp /quota-wordpress
+mount --bind /other/authority-db /quota-database
+mount --bind /other /quota-filesystem
+uuid=$(storage-probe --identity)
+plan() { "$1" --prepare "$owner" "$daemon" "$state" "$uuid" "$site" "$2" "$3"; }
+refuse() { plan storage-authority 1000000 existing | jq -e '(.verified | not)'; }
+reset_fixture() { rm -rf /other/.panel4wp-quota-plans /other/.panel4wp-quota-owner /other/.panel4wp-quota-lock /other/.panel4wp-quota-burned; }
+if test "$1" = setup; then
+ printf 'authority seed preserved' > /other/authority-wp/seed
+ seed=$(sha256sum /other/authority-wp/seed | cut -d ' ' -f1)
+ umount /quota-filesystem
+ mount --bind /other/authority-wp /quota-filesystem
+ plan storage-authority 1000000 claim | jq -e '(.verified | not) and .reason == "filesystem-root"'
+ test ! -e /other/authority-wp/.panel4wp-quota-owner
+ test ! -e /other/.panel4wp-quota-owner
+ umount /quota-filesystem
+ mount --bind /quota /quota-filesystem
+ plan storage-authority 1000000 claim | jq -e '(.verified | not) and .reason == "filesystem-root"'
+ umount /quota-filesystem
+ mount --bind /other /quota-filesystem
+ chmod 777 /other
+ plan storage-authority 1000000 claim | jq -e '(.verified | not) and .reason == "filesystem-root"'
+ chmod 755 /other
+ plan storage-authority 1000000 claim | jq -e '.verified and .reason == "prepared"'
+ plan storage-authority 1000000 existing | jq -e '.verified'
+ good_owner=$owner
+ owner=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+ refuse
+ owner=$good_owner
+ good_daemon=$daemon
+ daemon=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+ refuse
+ daemon=$good_daemon
+ good_state=$state
+ state=ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+ refuse
+ state=$good_state
+ cp /other/.panel4wp-quota-plans/$site /tmp/prepared-plan
+ mv /other/.panel4wp-quota-plans/$site /tmp/lost-plan
+ refuse
+ site=bbbbbbbbbbbbbbbb
+ plan storage-authority 1000000 claim | jq -e '(.verified | not) and .reason == "plan-state-loss"'
+ site=aaaaaaaaaaaaaaaa
+ cp /tmp/prepared-plan /other/.panel4wp-quota-plans/$site
+ # Recreated directories/index files must not masquerade as the authority.
+ mv /other/.panel4wp-quota-plans /other/saved-plans
+ mkdir -m 700 /other/.panel4wp-quota-plans
+ refuse
+ site=bbbbbbbbbbbbbbbb
+ plan storage-authority 1000000 claim | jq -e '(.verified | not)'
+ site=aaaaaaaaaaaaaaaa
+ rmdir /other/.panel4wp-quota-plans
+ mv /other/saved-plans /other/.panel4wp-quota-plans
+ mv /other/.panel4wp-quota-burned /other/saved-burned
+ refuse
+ cp /other/saved-burned /other/.panel4wp-quota-burned
+ refuse
+ rm /other/.panel4wp-quota-burned
+ mv /other/saved-burned /other/.panel4wp-quota-burned
+ plan storage-authority 1000000 existing | jq -e '.verified'
+ printf '\377\377\377\377\004\000\000\000' | dd of=/other/.panel4wp-quota-plans/$site bs=1 seek=256 conv=notrunc 2>/dev/null
+ refuse
+ cp /tmp/prepared-plan /other/.panel4wp-quota-plans/$site
+ site=bbbbbbbbbbbbbbbb
+ plan storage-authority 1000000 claim | jq -e '(.verified | not) and .reason == "project-reserved"'
+ plan storage-authority-small 1000001 claim | jq -e '.verified'
+ site=cccccccccccccccc
+ plan storage-authority-small 1000002 claim | jq -e '(.verified | not) and .reason == "plan-limit"'
+ site=aaaaaaaaaaaaaaaa
+ plan storage-authority-small 1000000 existing | jq -e '.verified'
+ # Old lock remains held across unlink; a replacement inode must never work.
+ PANEL4WP_AUTHORITY_CRASH=hold-lock plan storage-authority-crash 1000000 existing > /tmp/held-lock.log 2>&1 &
+ holder=$!
+ # Shell background function owns a child; find the native stopped process.
+ for i in $(seq 1 30); do
+  stopped=$(ps -o pid,stat,comm | awk '$2 ~ /^T/ && $3 ~ /storage-author/ {print $1; exit}')
+  test -n "$stopped" && break
+  sleep 1
+ done
+ test -n "$stopped"
+ rm /other/.panel4wp-quota-lock
+ refuse
+ refuse
+ kill -KILL "$stopped"
+ wait "$holder" || :
+ reset_fixture
+ for point in lock owner reservation journal-file journal; do
+  if PANEL4WP_AUTHORITY_CRASH=$point plan storage-authority-crash 1000000 claim >/tmp/checkpoint.log 2>&1; then echo 'checkpoint did not kill helper'; exit 1; fi
+  case "$point" in
+   owner) plan storage-authority 1000000 claim | jq -e '.verified' ;;
+   journal) plan storage-authority 1000000 existing | jq -e '.verified' ;;
+   *) refuse ;;
+  esac
+  test "$seed" = "$(sha256sum /other/authority-wp/seed | cut -d ' ' -f1)"
+  storage-probe --inventory | jq -e '.verified and .project_ids == []'
+  reset_fixture
+ done
+ plan storage-authority 1000000 claim | jq -e '.verified'
+ echo FILESYSTEM_AUTHORITY_AND_DURABLE_PREPARATION_PASS
+else
+ plan storage-authority 1000000 existing | jq -e '.verified'
+ test "$(cat /other/authority-wp/seed)" = 'authority seed preserved'
+ storage-probe --inventory | jq -e '.verified and .project_ids == []'
+ echo FILESYSTEM_AUTHORITY_PREPARATION_REBOOT_PASS
+fi
+umount /quota-filesystem /quota-wordpress /quota-database
+mount --bind /quota/wordpress /quota-wordpress
+mount --bind /quota/database /quota-database

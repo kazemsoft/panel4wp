@@ -23,7 +23,7 @@ func TestQuotaRegistryNativeVM(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w := &worker{root: "/quota/registry-state", docker: docker, storageImage: strings.TrimSpace(string(image))}
+	w := &worker{root: "/quota/registry-state", docker: docker, storageImage: strings.TrimSpace(string(image)), quotaRoot: "/quota"}
 	first, second := "4444444444444444", "5555555555555555"
 	if phase == "setup" {
 		if err := os.Mkdir(w.root, 0700); err != nil {
@@ -58,6 +58,33 @@ func TestQuotaRegistryNativeVM(t *testing.T) {
 			t.Fatal("reservation enabled quota", err)
 		}
 		t.Log("NATIVE_QUOTA_REGISTRY_RESERVATION_PASS")
+		compose := "services:\n  wordpress:\n    restart: unless-stopped\n    security_opt: [no-new-privileges:true]\n  db:\n    restart: unless-stopped\n    security_opt: [no-new-privileges:true]\n  cli:\n"
+		if err := os.WriteFile(filepath.Join(w.siteDir(first), "compose.yaml"), []byte(compose), 0600); err != nil {
+			t.Fatal(err)
+		}
+		for _, service := range []string{"wordpress", "db"} {
+			name, volume := "wph-wp-"+first, "wordpress_data"
+			if service == "db" {
+				name, volume = "wph-db-"+first, "database_data"
+			}
+			if err := docker.Run(ctx, "run", "-d", "--name", name, "--restart", "unless-stopped", "--network", "none", "--label", "com.docker.compose.project=wph-"+first, "--label", "com.docker.compose.service="+service, "--volume", "wph-"+first+"_"+volume+":/data", "guard-canary:lab", "/bin/sh", "-c", "while :; do /bin/busybox sleep 1; done"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := w.prepareQuotaTagging(ctx, first); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.prepareQuotaTagging(ctx, first); err != nil {
+			t.Fatal("preparation retry", err)
+		}
+		plan, err := w.readQuotaPlan(first)
+		if err != nil || plan == nil || plan.Phase != "prepared" {
+			t.Fatal(plan, err)
+		}
+		if guard, err := w.loadQuotaGuard(first); err == nil || guard != nil {
+			t.Fatal("preparation authorized starts", guard, err)
+		}
+		t.Log("NATIVE_WORKER_PREPARATION_AND_WRITER_FENCING_PASS")
 	} else if phase == "reboot" {
 		path := filepath.Join(w.root, ".quota", "projects.json")
 		before, err := os.ReadFile(path)
@@ -68,7 +95,7 @@ func TestQuotaRegistryNativeVM(t *testing.T) {
 		if err != nil || len(ledger.Reservations) != 2 {
 			t.Fatal("reboot lost ledger", ledger, err)
 		}
-		if entry, err := w.reserveQuotaProject(ctx, first); err == nil || entry.ProjectID != 0 {
+		if entry, err := w.reserveQuotaProject(ctx, second); err == nil || entry.ProjectID != 0 {
 			t.Fatal("unenforced storage accepted", entry, err)
 		}
 		after, _ := os.ReadFile(path)
@@ -79,6 +106,32 @@ func TestQuotaRegistryNativeVM(t *testing.T) {
 		if err != nil || strings.TrimSpace(string(out)) != "registry-preserved" {
 			t.Fatal("reservation lost volume data", err)
 		}
+		planPath := filepath.Join(w.siteDir(first), "quota-plan.json")
+		planBefore, err := os.ReadFile(planPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := w.prepareQuotaTagging(ctx, first); err == nil {
+			t.Fatal("unenforced preparation accepted")
+		}
+		planAfter, err := os.ReadFile(planPath)
+		if err != nil || string(planBefore) != string(planAfter) {
+			t.Fatal("failed preparation rewrote journal", err)
+		}
+		w.quotaRoot = "" // Startup fencing must not depend on the authority binding.
+		if err := w.reconcileQuotaSites(ctx, true); err != nil {
+			t.Fatal(err)
+		}
+		states, err := w.quotaContainers(ctx, first)
+		if err != nil || len(states) != 2 {
+			t.Fatal(states, err)
+		}
+		for _, state := range states {
+			if state.Restart != "no" || state.Status != "exited" {
+				t.Fatal("prepared writer resumed", state)
+			}
+		}
+		t.Log("NATIVE_PREPARATION_REBOOT_AND_MISSING_ROOT_FENCING_PASS")
 		t.Log("NATIVE_QUOTA_REGISTRY_REBOOT_AND_REJECTION_PASS")
 	} else {
 		t.Fatal("unknown VM phase")

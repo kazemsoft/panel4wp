@@ -107,7 +107,7 @@ static int compare_project(const void *a, const void *b) {
     return (x > y) - (x < y);
 }
 
-static int inventory(int wp, int db, const struct stat *a, const struct stat *b,
+static inline int inventory(int wp, int db, const struct stat *a, const struct stat *b,
                      bool same, bool accounting, bool enforcement) {
     struct project_set set = {.slots = calloc(INVENTORY_HASH_SLOTS, sizeof(uint32_t))};
     char uuid[33] = "", db_uuid[33];

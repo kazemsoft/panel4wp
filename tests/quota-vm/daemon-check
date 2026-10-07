@@ -18,7 +18,7 @@ case "$1" in
  setup)
   mkdir /quota/daemon-proof
   tar -cf - -C / bin/busybox bin/sh lib/ld-musl-*.so.1 | docker import - guard-canary:lab >/dev/null
-  tar -cf - -C / usr/local/bin/storage-probe | docker import - inventory-probe:lab >/dev/null
+  tar -cf - -C / usr/local/bin/storage-probe usr/local/bin/storage-authority | docker import - inventory-probe:lab >/dev/null
   for policy in no unless-stopped; do
    docker run -d --name "canary-$policy" --restart "$policy" --network none \
     --mount type=bind,src=/quota/daemon-proof,dst=/proof guard-canary:lab \

@@ -86,11 +86,13 @@ func (w *worker) quotaMarked(id string) (bool, error) {
 	if !core.ValidID(id) {
 		return false, errors.New("invalid site ID")
 	}
-	_, err := os.Lstat(filepath.Join(w.siteDir(id), "quota.json"))
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
+	for _, name := range []string{"quota.json", "quota-plan.json"} {
+		_, err := os.Lstat(filepath.Join(w.siteDir(id), name))
+		if !errors.Is(err, os.ErrNotExist) {
+			return true, err
+		}
 	}
-	return true, err
+	return false, nil
 }
 
 func (w *worker) loadQuotaIntent(id string) (quotaIntent, error) {

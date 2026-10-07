@@ -178,6 +178,7 @@ type worker struct {
 	panelDomain  string
 	docker       runner
 	storageImage string // Immutable identity cached per worker process.
+	quotaRoot    string // Reserved internal dedicated-XFS-root binding; no API enables it.
 	executionMu  sync.Mutex
 	toolsMu      sync.Mutex
 	toolTimers   map[string]*time.Timer

@@ -66,6 +66,10 @@ func (e *volumeProbeError) Error() string { return e.reason }
 
 // Only existing owned local volumes and this worker's immutable image are used.
 func (w *worker) runStorageProbe(ctx context.Context, id string, arguments ...string) ([]byte, error) {
+	return w.runStorageHelper(ctx, id, "storage-probe", nil, arguments...)
+}
+
+func (w *worker) runStorageHelper(ctx context.Context, id, entry string, mounts []string, arguments ...string) ([]byte, error) {
 	if !core.ValidID(id) {
 		return nil, errors.New("invalid site ID")
 	}
@@ -99,7 +103,11 @@ func (w *worker) runStorageProbe(ctx context.Context, id string, arguments ...st
 	if err != nil {
 		return nil, err
 	}
-	args := []string{"run", "--rm", "--pull", "never", "--network", "none", "--read-only", "--cap-drop", "ALL", "--cap-add", "SYS_ADMIN", "--cap-add", "DAC_READ_SEARCH", "--security-opt", "no-new-privileges:true", "--pids-limit", "16", "--memory", "32m", "--cpus", "0.25", "--entrypoint", "/usr/local/bin/storage-probe", "--mount", "type=volume,src=" + volumes[0] + ",dst=/quota-wordpress,readonly", "--mount", "type=volume,src=" + volumes[1] + ",dst=/quota-database,readonly", image}
+	args := []string{"run", "--rm", "--pull", "never", "--network", "none", "--read-only", "--cap-drop", "ALL", "--cap-add", "SYS_ADMIN", "--cap-add", "DAC_READ_SEARCH", "--security-opt", "no-new-privileges:true", "--pids-limit", "16", "--memory", "32m", "--cpus", "0.25", "--entrypoint", "/usr/local/bin/" + entry, "--mount", "type=volume,src=" + volumes[0] + ",dst=/quota-wordpress,readonly", "--mount", "type=volume,src=" + volumes[1] + ",dst=/quota-database,readonly"}
+	for _, mount := range mounts {
+		args = append(args, "--mount", mount)
+	}
+	args = append(args, image)
 	return w.docker.Output(ctx, append(args, arguments...)...)
 }
 

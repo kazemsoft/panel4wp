@@ -23,6 +23,7 @@ case "$(cat /proc/cmdline)" in
   mount --bind /quota/database /quota-database
   storage-probe | jq -e '.wordpress_filesystem == "xfs" and .reason != "supported" and (.project_enforcement | not)'
   storage-probe --guard "$project" 8388608 "$uuid" | jq -e '(.verified | not) and .reason == "enforcement-disabled"'
+  sh /lab/authority-check reboot
   sh /lab/daemon-check reboot
   echo REBOOT_LIMIT_AND_DISABLED_ENFORCEMENT_CHECK_PASS
   exit 0
@@ -113,5 +114,6 @@ grep -Eq 'No space left|Disk quota exceeded' /tmp/restore-error
 cmp /tmp/safety-seed /quota/wordpress/seed
 rm -f /quota/wordpress/oversize
 echo OVERSIZE_EXTRACTION_FAILURE_PASS
+sh /lab/authority-check setup
 sh /lab/daemon-check setup
 sync

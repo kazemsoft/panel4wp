@@ -28,6 +28,10 @@ Quota allocation is not yet exposed. When the future allocator writes a trusted 
 
 Keep internal quota records, startup intent and the complete sites state root in installation backups, including `.quota/projects.json`, `.quota-initialized` and `.quota-lock`. Provisional reservations remain burned after site deletion. A missing/corrupt ledger or sentinel refuses new reservations; restore complete metadata instead of initializing a replacement ledger. The stable lock file must not be unlinked while workers are running. Do not remove records, retag files or downgrade to a pre-gate worker to bypass a blocked state. Repair the storage and saved record using an allocator-aware version, then explicitly Start. See [the resource guide](RESOURCES.md#verified-restart-gate) for proof boundaries and pending allocation gates.
 
+Internal quota preparation also creates pending `quota.json`, `quota-plan.json` and `.quota/authority-<UUID>.json`. Prepared means only ownership and inode snapshots are durable; the site must remain stopped. Either per-site marker blocks writers even when the other marker is absent or the dedicated XFS root cannot be reached.
+
+Back up the dedicated filesystem root's `.panel4wp-quota-lock`, `.panel4wp-quota-owner`, `.panel4wp-quota-burned` and `.panel4wp-quota-plans/` together with complete installation state. Lock, index and directory inode/generation are bound to ownership: copying individual files to new inodes is not a supported recovery method. Missing/replaced metadata or an interrupted index/journal write deliberately blocks preparation, including new sites. Preserve storage and inspect it with a protocol-aware recovery implementation; automatic repair/adoption and partial-tagging recovery are not implemented yet. Never clear markers, recreate authority metadata or downgrade to a worker that ignores preparation markers. Ordinary non-quota sites keep their existing recovery behavior.
+
 ## Verification
 
 Automated tests simulate a new panel/worker process over persisted storage and cover:
